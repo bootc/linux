@@ -1075,6 +1075,8 @@ static int hub_configure(struct usb_hub *hub,
 	INIT_WORK(&hub->tt.clear_work, hub_tt_work);
 	switch (hdev->descriptor.bDeviceProtocol) {
 		case 0:
+			dev_dbg(hub_dev, "TT with no hub-specific protocol - "
+				"no TT\n");
 			break;
 		case 1:
 			dev_dbg(hub_dev, "Single TT\n");
@@ -1091,6 +1093,7 @@ static int hub_configure(struct usb_hub *hub,
 			hub->tt.hub = hdev;
 			break;
 		case 3:
+			dev_dbg(hub_dev, "USB 3.0 hub - no TT\n");
 			/* USB 3.0 hubs don't have a TT */
 			break;
 		default:
@@ -1720,6 +1723,12 @@ static inline void announce_device(struct usb_device *udev) { }
 #endif
 
 #ifdef	CONFIG_USB_OTG
+
+static int enable_whitelist;
+module_param(enable_whitelist, bool, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(enable_whitelist,
+		 "only recognize devices in OTG whitelist if true");
+
 #include "otg_whitelist.h"
 #endif
 
@@ -1774,9 +1783,15 @@ static int usb_enumerate_device_otg(struct usb_device *udev)
 					dev_info(&udev->dev,
 						"can't set HNP mode: %d\n",
 						err);
+					dev_printk(KERN_CRIT, &udev->dev,
+						"Not Connected/Responding\n");
+
 					bus->b_hnp_enable = 0;
+				} else {
+					dev_info(&udev->dev,
+						"HNP Not Supported\n");
 				}
-			}
+                        }
 		}
 	}
 
@@ -1785,12 +1800,27 @@ static int usb_enumerate_device_otg(struct usb_device *udev)
 		/* Maybe it can talk to us, though we can't talk to it.
 		 * (Includes HNP test device.)
 		 */
-		if (udev->bus->b_hnp_enable || udev->bus->is_b_host) {
+		if (udev->bus->b_hnp_enable || udev->bus->is_b_host ||
+		    udev->descriptor.idVendor == 0x1a0a) {
 			err = usb_port_suspend(udev, PMSG_SUSPEND);
-			if (err < 0)
+			if (err < 0) {
 				dev_dbg(&udev->dev, "HNP fail, %d\n", err);
+			} else {
+			    /* Return Connection Refused(ECONNREFUSED)
+			     * instead of No Device(ENODEV) so that the
+			     * retry loop in hub_port_connect_change() is
+			     * exited without disabling the port
+			     */
+			    err = -ECONNREFUSED;
+			    goto fail;
+			}
 		}
-		err = -ENOTSUPP;
+		//err = -ENOTSUPP;
+		/* Return Not Connected (ENOTCONN) instead of No
+		 * Device(ENODEV) so that the retry loop in
+		 * hub_port_connect_change() is exited
+		 */
+		err = -ENOTCONN;
 		goto fail;
 	}
 fail:
@@ -2981,7 +3011,9 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 				buf->bMaxPacketSize0 = 0;
 				r = usb_control_msg(udev, usb_rcvaddr0pipe(),
 					USB_REQ_GET_DESCRIPTOR, USB_DIR_IN,
-					USB_DT_DEVICE << 8, 0,
+					USB_DT_DEVICE << 8,
+					//USB_DT_DEVICE << 64, // DWC patch suggestion!
+					0,
 					buf, GET_DESCRIPTOR_BUFSIZE,
 					initial_descriptor_timeout);
 				switch (buf->bMaxPacketSize0) {
@@ -3427,8 +3459,10 @@ loop:
 		release_devnum(udev);
 		hub_free_dev(udev);
 		usb_put_dev(udev);
-		if ((status == -ENOTCONN) || (status == -ENOTSUPP))
-			break;
+		if (status == -ENOTCONN || status == -ENOTSUPP ||
+			status == -ECONNREFUSED)
+			// break; //DWC patch
+			return;
 	}
 	if (hub->hdev->parent ||
 			!hcd->driver->port_handed_over ||
