@@ -78,10 +78,8 @@ void sbp_handle_command(struct sbp_target_request *req)
 
 	pr_notice("tgt_agent cmd_len:%d\n", cmd_len);
 
-	transport_init_se_cmd(&req->se_cmd, &sbp_fabric_configfs->tf_ops,
-		sess->se_sess, req->data_length, req->data_direction,
-		MSG_SIMPLE_TAG, req->sense_buffer);
-
-
+	target_submit_cmd(&req->se_cmd, sess->se_sess, req->orb.command_block,
+			req->sense_buffer, req->agent->login->lun->unpacked_lun,
+			0, MSG_ORDERED_TAG, req->data_direction, TARGET_SCF_UNKNOWN_SIZE);
 }
 
