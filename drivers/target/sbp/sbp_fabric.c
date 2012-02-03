@@ -39,9 +39,12 @@
 #include <scsi/libfc.h>
 
 #include <target/target_core_base.h>
+#include <target/target_core_fabric.h>
 
 #include "sbp_base.h"
 #include "sbp_fabric.h"
+#include "sbp_target_agent.h"
+#include "sbp_scsi_cmnd.h"
 
 int sbp_check_true(struct se_portal_group *se_tpg)
 {
@@ -104,9 +107,30 @@ u32 sbp_tpg_get_inst_index(struct se_portal_group *se_tpg)
 	return 1;
 }
 
+int sbp_new_cmd(struct se_cmd *se_cmd)
+{
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+	int ret;
+
+	ret = transport_generic_allocate_tasks(se_cmd, req->orb.command_block);
+	if (ret)
+		return ret;
+
+	return transport_generic_map_mem_to_cmd(se_cmd, NULL, 0, NULL, 0);
+}
+
 void sbp_release_cmd(struct se_cmd *se_cmd)
 {
-	return;
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+
+	pr_info("sbp_release_cmd\n");
+
+	if (req->data_buf)
+	    kfree(req->data_buf);
+
+	kfree(req);
 }
 
 int sbp_shutdown_session(struct se_session *se_sess)
@@ -142,6 +166,35 @@ u32 sbp_sess_get_index(struct se_session *se_sess)
 
 int sbp_write_pending(struct se_cmd *se_cmd)
 {
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+	int ret;
+
+	if (!req->data_len)
+		return -EINVAL;
+
+	if (req->data_dir != DMA_TO_DEVICE) {
+	    pr_err("sbp_write_pending: incorrect data direction\n");
+	    return -EINVAL;
+	}
+
+	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
+	if (!req->data_buf)
+		return -ENOMEM;
+
+	ret = sbp_rw_data(req);
+	if (ret) {
+	    /* FIXME: send failure status */
+	    pr_warn("sbp_write_pending: send failure status\n");
+	    return ret;
+	}
+
+	sg_copy_from_buffer(se_cmd->t_data_sg,
+			se_cmd->t_data_nents,
+			req->data_buf,
+			se_cmd->data_length);
+	transport_generic_process_write(se_cmd);
+
 	return 0;
 }
 
@@ -157,6 +210,7 @@ void sbp_set_default_node_attrs(struct se_node_acl *nacl)
 
 u32 sbp_get_task_tag(struct se_cmd *se_cmd)
 {
+	/* FIXME */
 	return 0;
 }
 
@@ -167,11 +221,55 @@ int sbp_get_cmd_state(struct se_cmd *se_cmd)
 
 int sbp_queue_data_in(struct se_cmd *se_cmd)
 {
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+	int ret;
+
+	if (!req->data_len) {
+	    /* FIXME: send failure status */
+	    pr_err("sbp_queue_data_in: no initiator data buffers\n");
+	    return 0;
+	}
+
+	if (req->data_dir != DMA_FROM_DEVICE) {
+	    pr_err("sbp_queue_data_in: incorrect data direction\n");
+	    return -EINVAL;
+	}
+
+	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
+	if (!req->data_buf)
+	    return -ENOMEM;
+
+	sg_copy_to_buffer(se_cmd->t_data_sg,
+		se_cmd->t_data_nents,
+		req->data_buf,
+		se_cmd->data_length);
+
+	ret = sbp_rw_data(req);
+	if (ret) {
+	    /* FIXME: send failure status */
+	    pr_warn("sbp_queue_data_in: send failure status\n");
+	    return ret;
+	}
+
+	/* FIXME: send success status */
+	pr_warn("sbp_queue_data_in: send success status\n");
+
 	return 0;
 }
 
+/*
+ * Called after command (no data transfer) or after the write (to device)
+ * operation is completed
+ */
 int sbp_queue_status(struct se_cmd *se_cmd)
 {
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+
+	/* FIXME: send status */
+	pr_err("sbp_queue_status: not implemented\n");
+
 	return 0;
 }
 
@@ -193,5 +291,16 @@ u16 sbp_get_fabric_sense_len(void)
 int sbp_is_state_remove(struct se_cmd *se_cmd)
 {
 	return 0;
+}
+
+int sbp_check_stop_free(struct se_cmd *se_cmd)
+{
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+
+	pr_info("sbp_check_stop_free\n");
+
+	transport_generic_free_cmd(&req->se_cmd, 0);
+	return 1;
 }
 

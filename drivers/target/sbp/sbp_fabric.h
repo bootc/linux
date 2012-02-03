@@ -9,6 +9,7 @@ struct se_node_acl *sbp_alloc_fabric_acl(struct se_portal_group *);
 void sbp_release_fabric_acl(struct se_portal_group *,
 		struct se_node_acl *);
 u32 sbp_tpg_get_inst_index(struct se_portal_group *);
+int sbp_new_cmd(struct se_cmd *se_cmd);
 void sbp_release_cmd(struct se_cmd *se_cmd);
 int sbp_shutdown_session(struct se_session *);
 void sbp_close_session(struct se_session *);
@@ -27,4 +28,5 @@ int sbp_queue_tm_rsp(struct se_cmd *);
 u16 sbp_set_fabric_sense_len(struct se_cmd *, u32);
 u16 sbp_get_fabric_sense_len(void);
 int sbp_is_state_remove(struct se_cmd *);
+int sbp_check_stop_free(struct se_cmd *se_cmd);
 

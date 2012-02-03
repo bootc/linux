@@ -202,12 +202,11 @@ static void tgt_agent_process_work(struct work_struct *work)
 	/* check for a Dummy ORB */
 	if (ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc)) == 3) {
 		/* FIXME: send response */
+		kfree(req);
 	}
 	else {
 		sbp_handle_command(req);
 	}
-
-	kfree(req);
 }
 
 static void tgt_agent_fetch_work(struct work_struct *work)

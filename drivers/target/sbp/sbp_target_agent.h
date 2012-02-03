@@ -13,14 +13,14 @@ struct sbp_target_request {
 	struct sbp_status_block status;
 	struct work_struct work;
 
-	/* Total size in bytes associated with command */
-	u32			data_length;
-	/* See include/linux/dma-mapping.h */
-	enum dma_data_direction	data_direction;
-	/* The TCM I/O descriptor that is accessed via container_of() */
-	struct se_cmd		se_cmd;
+	struct se_cmd se_cmd;
+	void *cmd_buf;
+	int unpacked_lun;
+	u32 data_len;
+	enum dma_data_direction	data_dir;
+	void *data_buf;
 
-	unsigned char sense_buffer[TRANSPORT_SENSE_BUFFER];
+	unsigned char sense_buf[TRANSPORT_SENSE_BUFFER];
 };
 
 struct sbp_target_agent *sbp_target_agent_register(

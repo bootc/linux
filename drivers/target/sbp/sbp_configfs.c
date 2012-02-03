@@ -546,11 +546,12 @@ static struct target_core_fabric_ops sbp_ops = {
 	.tpg_parse_pr_out_transport_id	= sbp_parse_pr_out_transport_id,
 	.tpg_check_demo_mode		= sbp_check_false,
 	.tpg_check_demo_mode_cache	= sbp_check_true,
-	.tpg_check_demo_mode_write_protect = sbp_check_true,
+	.tpg_check_demo_mode_write_protect = sbp_check_false,
 	.tpg_check_prod_mode_write_protect = sbp_check_false,
 	.tpg_alloc_fabric_acl		= sbp_alloc_fabric_acl,
 	.tpg_release_fabric_acl		= sbp_release_fabric_acl,
 	.tpg_get_inst_index		= sbp_tpg_get_inst_index,
+	.new_cmd_map			= sbp_new_cmd,
 	.release_cmd			= sbp_release_cmd,
 	.shutdown_session		= sbp_shutdown_session,
 	.close_session			= sbp_close_session,
@@ -570,10 +571,8 @@ static struct target_core_fabric_ops sbp_ops = {
 	.get_fabric_sense_len		= sbp_get_fabric_sense_len,
 	.set_fabric_sense_len		= sbp_set_fabric_sense_len,
 	.is_state_remove		= sbp_is_state_remove,
-	/*
-	 * Setup function pointers for generic logic in
-	 * target_core_fabric_configfs.c
-	 */
+	.check_stop_free		= sbp_check_stop_free,
+
 	.fabric_make_wwn		= sbp_make_tport,
 	.fabric_drop_wwn		= sbp_drop_tport,
 	.fabric_make_tpg		= sbp_make_tpg,
