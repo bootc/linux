@@ -63,9 +63,8 @@ static int tgt_agent_rw_agent_reset(struct fw_card *card,
 		pr_notice("tgt_agent AGENT_RESET");
 		atomic_set(&agent->state, AGENT_STATE_RESET);
 		return RCODE_COMPLETE;
-	} else {
+	} else
 		return RCODE_TYPE_ERROR;
-	}
 }
 
 static int tgt_agent_rw_orb_pointer(struct fw_card *card,
@@ -92,9 +91,8 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 		pr_notice("tgt_agent ORB_POINTER: 0x%llx", agent->orb_pointer);
 
 		ret = queue_work(fw_workqueue, &agent->work);
-		if (!ret) {
+		if (!ret)
 			return RCODE_CONFLICT_ERROR;
-		}
 
 		return RCODE_COMPLETE;
 	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
@@ -158,6 +156,8 @@ static void tgt_agent_rw(struct fw_card *card,
 	struct sbp_target_agent *agent = callback_data;
 	int rcode = RCODE_ADDRESS_ERROR;
 
+	pr_info("tgt_agent rw callback\n");
+
 	/* turn offset into the offset from the start of the block */
 	offset -= agent->handler.offset;
 
@@ -201,7 +201,13 @@ static void tgt_agent_process_work(struct work_struct *work)
 
 	/* check for a Dummy ORB */
 	if (ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc)) == 3) {
-		/* FIXME: send response */
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_DUMMY_ORB_COMPLETE));
+		sbp_send_status(req);
+		pr_info("tgt_agent dummy ORB complete\n");
 		kfree(req);
 	}
 	else {
@@ -254,6 +260,17 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		be32_to_cpu(req->orb.misc));
 
 	req->agent = agent;
+
+	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000)
+		req->status.status = cpu_to_be32(
+			STATUS_BLOCK_SRC(STATUS_SRC_ORB_FINISHED));
+	else
+		req->status.status = cpu_to_be32(
+			STATUS_BLOCK_SRC(STATUS_SRC_ORB_CONTINUING));
+
+	req->status.status |= cpu_to_be32(
+		STATUS_BLOCK_ORB_OFFSET_HIGH(agent->orb_pointer >> 32));
+	req->status.orb_low = cpu_to_be32(agent->orb_pointer & 0xfffffffc);
 	INIT_WORK(&req->work, tgt_agent_process_work);
 
 	ret = queue_work(fw_workqueue, &req->work);

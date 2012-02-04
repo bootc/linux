@@ -26,4 +26,3 @@ struct sbp_target_request {
 struct sbp_target_agent *sbp_target_agent_register(
 		struct sbp_login_descriptor *login);
 void sbp_target_agent_unregister(struct sbp_target_agent *agent);
-

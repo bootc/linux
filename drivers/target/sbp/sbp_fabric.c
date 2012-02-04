@@ -128,7 +128,7 @@ void sbp_release_cmd(struct se_cmd *se_cmd)
 	pr_info("sbp_release_cmd\n");
 
 	if (req->data_buf)
-	    kfree(req->data_buf);
+		kfree(req->data_buf);
 
 	kfree(req);
 }
@@ -174,9 +174,13 @@ int sbp_write_pending(struct se_cmd *se_cmd)
 		return -EINVAL;
 
 	if (req->data_dir != DMA_TO_DEVICE) {
-	    pr_err("sbp_write_pending: incorrect data direction\n");
-	    return -EINVAL;
+		pr_err("sbp_write_pending: incorrect data direction\n");
+		return -EINVAL;
 	}
+
+	if (req->data_len != se_cmd->data_length)
+		pr_warn("sbp_write_pending: dodgy data length (%d != %d)\n",
+			req->data_len, se_cmd->data_length);
 
 	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 	if (!req->data_buf)
@@ -184,9 +188,14 @@ int sbp_write_pending(struct se_cmd *se_cmd)
 
 	ret = sbp_rw_data(req);
 	if (ret) {
-	    /* FIXME: send failure status */
-	    pr_warn("sbp_write_pending: send failure status\n");
-	    return ret;
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+		sbp_send_status(req);
+		pr_warn("sbp_write_pending: data write error\n");
+		return ret;
 	}
 
 	sg_copy_from_buffer(se_cmd->t_data_sg,
@@ -223,22 +232,31 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
-	int ret;
+	int ret, sense_len;
 
 	if (!req->data_len) {
-	    /* FIXME: send failure status */
-	    pr_err("sbp_queue_data_in: no initiator data buffers\n");
-	    return 0;
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_ILLEGAL_REQUEST) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+		sbp_send_status(req);
+		pr_err("sbp_queue_data_in: no initiator data buffers\n");
+		return 0;
 	}
 
 	if (req->data_dir != DMA_FROM_DEVICE) {
-	    pr_err("sbp_queue_data_in: incorrect data direction\n");
-	    return -EINVAL;
+		pr_err("sbp_queue_data_in: incorrect data direction\n");
+		return -EINVAL;
 	}
+
+	if (req->data_len != se_cmd->data_length)
+		pr_warn("sbp_write_pending: dodgy data length (%d != %d)\n",
+			req->data_len, se_cmd->data_length);
 
 	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 	if (!req->data_buf)
-	    return -ENOMEM;
+		return -ENOMEM;
 
 	sg_copy_to_buffer(se_cmd->t_data_sg,
 		se_cmd->t_data_nents,
@@ -247,15 +265,35 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 
 	ret = sbp_rw_data(req);
 	if (ret) {
-	    /* FIXME: send failure status */
-	    pr_warn("sbp_queue_data_in: send failure status\n");
-	    return ret;
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+		sbp_send_status(req);
+		pr_warn("sbp_queue_data_in: send failure status\n");
+		return ret;
 	}
 
-	/* FIXME: send success status */
-	pr_warn("sbp_queue_data_in: send success status\n");
+	sense_len = min((int)se_cmd->scsi_sense_length,
+		(int)sizeof(req->status.data));
+	if (sense_len) {
+		memcpy(req->status.data, req->sense_buf, sense_len);
+		print_hex_dump_bytes("sense: ", DUMP_PREFIX_OFFSET,
+			req->sense_buf, se_cmd->scsi_sense_length);
+	}
 
-	return 0;
+	req->status.status |= cpu_to_be32(
+		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+		STATUS_BLOCK_DEAD(0) |
+		STATUS_BLOCK_LEN(DIV_ROUND_UP(sense_len, 4) + 1) |
+		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
+	ret = sbp_send_status(req);
+
+	pr_info("sbp_queue_data_in: send success status, sense_len:%x\n",
+		sense_len);
+
+	return ret;
 }
 
 /*
@@ -266,11 +304,23 @@ int sbp_queue_status(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
+	int sense_len, ret;
 
-	/* FIXME: send status */
-	pr_err("sbp_queue_status: not implemented\n");
+	sense_len = min((int)se_cmd->scsi_sense_length,
+		(int)sizeof(req->status.data));
+	if (sense_len)
+		memcpy(req->status.data, req->sense_buf, sense_len);
 
-	return 0;
+	req->status.status |= cpu_to_be32(
+		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+		STATUS_BLOCK_DEAD(0) |
+		STATUS_BLOCK_LEN(DIV_ROUND_UP(sense_len, 4) + 1) |
+		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
+	ret = sbp_send_status(req);
+
+	pr_info("sbp_queue_status, sense_len:%x\n", sense_len);
+
+	return ret;
 }
 
 int sbp_queue_tm_rsp(struct se_cmd *se_cmd)

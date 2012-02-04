@@ -87,9 +87,11 @@ void sbp_handle_command(struct sbp_target_request *req)
 	req->data_len = sbp_calc_data_length(&req->orb);
 	req->data_dir = sbp_data_direction(&req->orb);
 
-	pr_notice("smb_handle_command cmd_len:%d unpacked_lun:%d data_len:%d "
-			"data_dir:%d\n", cmd_len, req->unpacked_lun, req->data_len,
-			req->data_dir);
+	pr_notice("sbp_handle_command cmd_len:%d unpacked_lun:%d data_len:%d "
+		"data_dir:%d\n", cmd_len, req->unpacked_lun, req->data_len,
+		req->data_dir);
+
+	print_hex_dump_bytes("cmd: ", DUMP_PREFIX_OFFSET, req->cmd_buf, cmd_len);
 
 	target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
 			req->sense_buf, req->unpacked_lun, 0, MSG_SIMPLE_TAG,
@@ -113,11 +115,27 @@ int sbp_rw_data(struct sbp_target_request *req)
 		pr_err("sbp_rw_data: page tables unimplemented\n");
 		return -EIO;
 	} else {
-		ret = fw_run_transaction(sess->card, (req->data_dir == DMA_TO_DEVICE) ?
-				TCODE_READ_BLOCK_REQUEST : TCODE_WRITE_BLOCK_REQUEST,
-				sess->node_id, sess->generation, sess->speed,
-				sbp2_pointer_to_addr(&req->orb.data_descriptor),
-				req->data_buf, req->data_len);
+		/* FIXME: take page_size into account */
+		/* FIXME: take max_payload into account */
+		/* FIXME: use speed from the ORB */
+		/* FIXME: retry failed data transfers */
+
+		/*
+		CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
+		CMDBLK_ORB_MAX_PAYLOAD(be32_to_cpu(req->orb.misc));
+		CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
+		*/
+
+		print_hex_dump_bytes(req->data_dir == DMA_TO_DEVICE ?
+			"data read: " : "data write: ",
+			DUMP_PREFIX_OFFSET, req->data_buf, req->data_len);
+
+		ret = fw_run_transaction(sess->card,
+			(req->data_dir == DMA_TO_DEVICE) ?
+			TCODE_READ_BLOCK_REQUEST : TCODE_WRITE_BLOCK_REQUEST,
+			sess->node_id, sess->generation, sess->speed,
+			sbp2_pointer_to_addr(&req->orb.data_descriptor),
+			req->data_buf, req->data_len);
 		if (ret != RCODE_COMPLETE) {
 			pr_err("sbp_rw_data: r/w failed: %x\n", ret);
 			return -EIO;
@@ -127,3 +145,23 @@ int sbp_rw_data(struct sbp_target_request *req)
 	return 0;
 }
 
+int sbp_send_status(struct sbp_target_request *req)
+{
+	int ret;
+	struct sbp_login_descriptor *login = req->agent->login;
+	struct sbp_session *sess = login->sess;
+
+	/* FIXME: retry failed data transfers */
+
+	ret = fw_run_transaction(sess->card, TCODE_WRITE_BLOCK_REQUEST,
+		sess->node_id, sess->generation, sess->speed,
+		login->status_fifo_addr, &req->status, sizeof(req->status));
+	if (ret != RCODE_COMPLETE) {
+		pr_err("sbp_send_status: write failed: %x\n", ret);
+		return -EIO;
+	}
+
+	pr_info("sbp_send_status: sent ORB status\n");
+
+	return 0;
+}

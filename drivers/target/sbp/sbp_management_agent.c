@@ -143,7 +143,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 	/* set up the status block we'll send to the initiator */
 	req->status.status |= cpu_to_be32(
 		STATUS_BLOCK_SRC(1) | /* Response to ORB, next_ORB absent */
-		STATUS_BLOCK_LEN(status_data_len / 4 + 1) |
+		STATUS_BLOCK_LEN(DIV_ROUND_UP(status_data_len, 4) + 1) |
 		STATUS_BLOCK_ORB_OFFSET_HIGH(agent->orb_offset >> 32));
 	req->status.orb_low = cpu_to_be32(agent->orb_offset);
 
@@ -156,6 +156,8 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		pr_err("mgt_orb status write failed: %x\n", ret);
 		goto out;
 	}
+
+	pr_info("mgt_orb sent status\n");
 
 out:
 	fw_card_put(req->card);
@@ -170,6 +172,8 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 {
 	struct sbp_management_agent *agent = callback_data;
 	struct sbp2_pointer *ptr = data;
+
+	pr_info("mgt_agent rw callback\n");
 
 	if (!agent->tpg->enable) {
 		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
@@ -216,9 +220,12 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
 
+		pr_notice("mgt_agent ORB_POINTER: 0x%llx", agent->orb_offset);
+
 		ret = queue_work(fw_workqueue, &agent->work);
 		if (!ret) {
 			/* pretend we're busy */
+			kfree(req);
 			fw_send_response(card, request, RCODE_CONFLICT_ERROR);
 			return;
 		}
