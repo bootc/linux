@@ -157,8 +157,6 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		goto out;
 	}
 
-	pr_info("mgt_orb sent status\n");
-
 out:
 	fw_card_put(req->card);
 	kfree(req);
@@ -172,8 +170,6 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 {
 	struct sbp_management_agent *agent = callback_data;
 	struct sbp2_pointer *ptr = data;
-
-	pr_info("mgt_agent rw callback\n");
 
 	if (!agent->tpg->enable) {
 		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
@@ -219,8 +215,6 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
-
-		pr_notice("mgt_agent ORB_POINTER: 0x%llx", agent->orb_offset);
 
 		ret = queue_work(fw_workqueue, &agent->work);
 		if (!ret) {

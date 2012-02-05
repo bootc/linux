@@ -60,7 +60,7 @@ static int tgt_agent_rw_agent_reset(struct fw_card *card,
 	struct sbp_target_agent *agent)
 {
 	if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-		pr_notice("tgt_agent AGENT_RESET");
+		pr_debug("tgt_agent AGENT_RESET");
 		atomic_set(&agent->state, AGENT_STATE_RESET);
 		return RCODE_COMPLETE;
 	} else
@@ -87,8 +87,6 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 		smp_wmb();
 
 		agent->orb_pointer = sbp2_pointer_to_addr(ptr);
-
-		pr_notice("tgt_agent ORB_POINTER: 0x%llx", agent->orb_pointer);
 
 		ret = queue_work(fw_workqueue, &agent->work);
 		if (!ret)
@@ -156,8 +154,6 @@ static void tgt_agent_rw(struct fw_card *card,
 	struct sbp_target_agent *agent = callback_data;
 	int rcode = RCODE_ADDRESS_ERROR;
 
-	pr_info("tgt_agent rw callback\n");
-
 	/* turn offset into the offset from the start of the block */
 	offset -= agent->handler.offset;
 
@@ -199,19 +195,31 @@ static void tgt_agent_process_work(struct work_struct *work)
 	struct sbp_target_request *req =
 		container_of(work, struct sbp_target_request, work);
 
-	/* check for a Dummy ORB */
-	if (ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc)) == 3) {
+	switch (ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc))) {
+	case 0:/* Format specified by this standard */
+		sbp_handle_command(req);
+		return;
+	case 1: /* Reserved for future standardization */
+	case 2: /* Vendor-dependent */
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_REQ_TYPE_NOTSUPP));
+		sbp_send_status(req);
+		sbp_free_request(req);
+		return;
+	case 3: /* Dummy ORB */
 		req->status.status |= cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
 			STATUS_BLOCK_DEAD(0) |
 			STATUS_BLOCK_LEN(1) |
 			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_DUMMY_ORB_COMPLETE));
 		sbp_send_status(req);
-		pr_info("tgt_agent dummy ORB complete\n");
-		kfree(req);
-	}
-	else {
-		sbp_handle_command(req);
+		sbp_free_request(req);
+		return;
+	default:
+		BUG();
 	}
 }
 
@@ -233,7 +241,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 
 	smp_rmb();
 	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE) {
-		kfree(req);
+		sbp_free_request(req);
 		return;
 	}
 
@@ -242,24 +250,25 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		sess->node_id, sess->generation, sess->speed,
 		agent->orb_pointer, &req->orb, sizeof(req->orb));
 	if (ret != RCODE_COMPLETE) {
-		pr_err("tgt_orb fetch failed: %x\n",
-			ret);
-		kfree(req);
+		pr_err("tgt_orb fetch failed: %x\n", ret);
+		sbp_free_request(req);
 		goto out;
 	}
 
 	smp_rmb();
 	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE) {
-		kfree(req);
+		sbp_free_request(req);
 		return;
 	}
 
-	pr_info("tgt_orb next_orb:0x%llx data_descriptor:0x%llx misc:0x%x\n",
+	req->agent = agent;
+	req->orb_pointer = agent->orb_pointer;
+
+	pr_debug("tgt_orb ptr:0x%llx next_orb:0x%llx data_descriptor:0x%llx misc:0x%x\n",
+		req->orb_pointer,
 		sbp2_pointer_to_addr(&req->orb.next_orb),
 		sbp2_pointer_to_addr(&req->orb.data_descriptor),
 		be32_to_cpu(req->orb.misc));
-
-	req->agent = agent;
 
 	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000)
 		req->status.status = cpu_to_be32(
@@ -276,7 +285,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	ret = queue_work(fw_workqueue, &req->work);
 	if (!ret) {
 		pr_err("tgt_orb queue_work failed\n");
-		kfree(req);
+		sbp_free_request(req);
 	}
 
 	/* check if we should carry on processing */

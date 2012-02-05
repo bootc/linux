@@ -449,11 +449,55 @@ void sbp_management_request_reconnect(
 	struct sbp_management_agent *agent, struct sbp_management_request *req,
 	int *status_data_size)
 {
-	pr_notice("mgt_agent RECONNECT\n");
+	struct sbp_tpg *tpg = agent->tpg;
+	int ret;
+	u64 guid;
+	struct sbp_login_descriptor *login;
+
+	/* read the peer's GUID */
+	ret = read_peer_guid(&guid, req);
+	if (ret != RCODE_COMPLETE) {
+		pr_warn("failed to read peer GUID: %d", ret);
+
+		req->status.status = cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+		return;
+	}
+
+	pr_notice("mgt_agent RECONNECT from %016llx\n", guid);
+
+	/* find the login */
+	login = sbp_login_find_by_id(tpg,
+		RECONNECT_ORB_LOGIN_ID(be32_to_cpu(req->orb.misc)));
+
+	if (!login) {
+		pr_err("mgt_agent RECONNECT unknown login ID\n");
+
+		req->status.status = cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_ACCESS_DENIED));
+		return;
+	}
+
+	if (login->sess->guid != guid) {
+		pr_err("mgt_agent RECONNECT login GUID doesn't match\n");
+
+		req->status.status = cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_ACCESS_DENIED));
+		return;
+	}
+
+	/* update the node details */
+	login->sess->generation = req->generation;
+	login->sess->node_id = req->node_addr;
+	login->sess->card = fw_card_get(req->card);
+	login->sess->speed = req->speed;
 
 	req->status.status = cpu_to_be32(
 		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
-		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_REQ_TYPE_NOTSUPP));
+		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
 }
 
 void sbp_management_request_logout(

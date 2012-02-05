@@ -113,7 +113,7 @@ int sbp_new_cmd(struct se_cmd *se_cmd)
 			struct sbp_target_request, se_cmd);
 	int ret;
 
-	ret = transport_generic_allocate_tasks(se_cmd, req->orb.command_block);
+	ret = transport_generic_allocate_tasks(se_cmd, req->cmd_buf);
 	if (ret)
 		return ret;
 
@@ -125,12 +125,7 @@ void sbp_release_cmd(struct se_cmd *se_cmd)
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
 
-	pr_info("sbp_release_cmd\n");
-
-	if (req->data_buf)
-		kfree(req->data_buf);
-
-	kfree(req);
+	sbp_free_request(req);
 }
 
 int sbp_shutdown_session(struct se_session *se_sess)
@@ -232,7 +227,7 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
-	int ret, sense_len;
+	int ret;
 
 	if (!req->data_len) {
 		req->status.status |= cpu_to_be32(
@@ -275,25 +270,7 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 		return ret;
 	}
 
-	sense_len = min((int)se_cmd->scsi_sense_length,
-		(int)sizeof(req->status.data));
-	if (sense_len) {
-		memcpy(req->status.data, req->sense_buf, sense_len);
-		print_hex_dump_bytes("sense: ", DUMP_PREFIX_OFFSET,
-			req->sense_buf, se_cmd->scsi_sense_length);
-	}
-
-	req->status.status |= cpu_to_be32(
-		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
-		STATUS_BLOCK_DEAD(0) |
-		STATUS_BLOCK_LEN(DIV_ROUND_UP(sense_len, 4) + 1) |
-		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
-	ret = sbp_send_status(req);
-
-	pr_info("sbp_queue_data_in: send success status, sense_len:%x\n",
-		sense_len);
-
-	return ret;
+	return sbp_send_sense(req);
 }
 
 /*
@@ -304,23 +281,8 @@ int sbp_queue_status(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
-	int sense_len, ret;
 
-	sense_len = min((int)se_cmd->scsi_sense_length,
-		(int)sizeof(req->status.data));
-	if (sense_len)
-		memcpy(req->status.data, req->sense_buf, sense_len);
-
-	req->status.status |= cpu_to_be32(
-		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
-		STATUS_BLOCK_DEAD(0) |
-		STATUS_BLOCK_LEN(DIV_ROUND_UP(sense_len, 4) + 1) |
-		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
-	ret = sbp_send_status(req);
-
-	pr_info("sbp_queue_status, sense_len:%x\n", sense_len);
-
-	return ret;
+	return sbp_send_sense(req);
 }
 
 int sbp_queue_tm_rsp(struct se_cmd *se_cmd)
@@ -347,8 +309,6 @@ int sbp_check_stop_free(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
-
-	pr_info("sbp_check_stop_free\n");
 
 	transport_generic_free_cmd(&req->se_cmd, 0);
 	return 1;

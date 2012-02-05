@@ -29,6 +29,7 @@
 #define LOGIN_ORB_PASSWORD_LENGTH(v)	(((v) >> 16) & 0xffff)
 #define LOGIN_ORB_RESPONSE_LENGTH(v)	(((v) >>  0) & 0xffff)
 
+#define RECONNECT_ORB_LOGIN_ID(v)	(((v) >>  0) & 0xffff)
 #define LOGOUT_ORB_LOGIN_ID(v)		(((v) >>  0) & 0xffff)
 
 #define CMDBLK_ORB_DIRECTION(v)		(((v) >> 27) &   0x01)
@@ -84,6 +85,12 @@ struct sbp_command_block_orb {
 	struct sbp2_pointer data_descriptor;
 	__be32 misc;
 	u8 command_block[12];
+};
+
+struct sbp_page_table_entry {
+	__be16 segment_length;
+	__be16 segment_base_hi;
+	__be32 segment_base_lo;
 };
 
 struct sbp_management_orb {
