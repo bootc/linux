@@ -408,8 +408,9 @@ static ssize_t sbp_tpg_store_enable(
 		if (list_empty(&tpg->lun_list))
 			return -EINVAL;
 	} else {
+		/* FIXME: force-shutdown sessions instead */
 		if (!list_empty(&se_tpg->tpg_sess_list))
-			return -EINVAL;
+			return -EBUSY;
 	}
 
 	tpg->enable = val;
