@@ -217,7 +217,7 @@ static void sbp_session_release(struct sbp_session *sess)
 
 static void sbp_login_release(struct sbp_login_descriptor *login)
 {
-	// FIXME: abort/wait on tasks
+	/* FIXME: abort/wait on tasks */
 
 	list_del(&login->link);
 	sbp_target_agent_unregister(login->tgt_agt);
@@ -272,13 +272,20 @@ void sbp_management_request_login(
 	 * check for any existing logins by comparing GUIDs
 	 * reject with access_denied if present
 	 */
-	if (sess && sbp_login_find_by_lun(sess, lun)) {
-		pr_warn("initiator already logged-in");
+	if (sess) {
+		login = sbp_login_find_by_lun(sess, lun);
+		if (login) {
+			pr_warn("initiator already logged-in");
 
-		req->status.status = cpu_to_be32(
-			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
-			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_ACCESS_DENIED));
-		return;
+			/*
+			 * SBP-2 R4 says we should return access denied, but
+			 * that can confuse initiators. Instead we need to
+			 * treat this like a reconnect, but send the login
+			 * response block like a fresh login.
+			 */
+
+			goto already_logged_in;
+		}
 	}
 
 	/*
@@ -286,8 +293,7 @@ void sbp_management_request_login(
 	 * reject with access_denied if any logins present
 	 */
 	if (LOGIN_ORB_EXCLUSIVE(be32_to_cpu(req->orb.misc)) &&
-		sbp_login_count_all_by_lun(tpg, lun, 0))
-	{
+		sbp_login_count_all_by_lun(tpg, lun, 0)) {
 		pr_warn("refusing exclusive login with other active logins");
 
 		req->status.status = cpu_to_be32(
@@ -313,7 +319,8 @@ void sbp_management_request_login(
 	 * check we haven't exceeded the number of allowed logins
 	 * reject with resources_unavailable if we have
 	 */
-	if (sbp_login_count_all_by_lun(tpg, lun, 0) >= tpg->max_logins_per_lun) {
+	if (sbp_login_count_all_by_lun(tpg, lun, 0) >=
+		tpg->max_logins_per_lun) {
 		pr_warn("max number of logins reached");
 
 		req->status.status = cpu_to_be32(
@@ -386,6 +393,7 @@ void sbp_management_request_login(
 	/* add to logins list */
 	list_add_tail(&login->link, &sess->login_list);
 
+already_logged_in:
 	/* send login response */
 	response = kzalloc(sizeof(*response), GFP_KERNEL);
 	if (!response) {
@@ -439,6 +447,7 @@ void sbp_management_request_query_logins(
 	int *status_data_size)
 {
 	pr_notice("mgt_agent QUERY LOGINS\n");
+	/* FIXME: implement */
 
 	req->status.status = cpu_to_be32(
 		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |

@@ -47,12 +47,11 @@ static int tgt_agent_rw_agent_state(struct fw_card *card,
 		memcpy(data, &state, sizeof(state));
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+	} else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
 		/* ignored */
 		return RCODE_COMPLETE;
-	} else {
+	else
 		return RCODE_TYPE_ERROR;
-	}
 }
 
 static int tgt_agent_rw_agent_reset(struct fw_card *card,
@@ -97,9 +96,8 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 		pr_notice("tgt_agent ORB_POINTER READ");
 		addr_to_sbp2_pointer(agent->orb_pointer, ptr);
 		return RCODE_COMPLETE;
-	} else {
+	} else
 		return RCODE_TYPE_ERROR;
-	}
 }
 
 static int tgt_agent_rw_doorbell(struct fw_card *card,
@@ -119,16 +117,14 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 		pr_notice("tgt_agent DOORBELL");
 
 		ret = queue_work(fw_workqueue, &agent->work);
-		if (!ret) {
+		if (!ret)
 			return RCODE_CONFLICT_ERROR;
-		}
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_QUADLET_REQUEST) {
+	} else if (tcode == TCODE_READ_QUADLET_REQUEST)
 		return RCODE_COMPLETE;
-	} else {
+	else
 		return RCODE_TYPE_ERROR;
-	}
 }
 
 static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
@@ -139,11 +135,10 @@ static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
 		pr_notice("tgt_agent UNSOLICITED_STATUS_ENABLE");
 		atomic_set(&agent->login->unsolicited_status_enable, 1);
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_QUADLET_REQUEST) {
+	} else if (tcode == TCODE_READ_QUADLET_REQUEST)
 		return RCODE_COMPLETE;
-	} else {
+	else
 		return RCODE_TYPE_ERROR;
-	}
 }
 
 static void tgt_agent_rw(struct fw_card *card,
@@ -264,8 +259,8 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	req->agent = agent;
 	req->orb_pointer = agent->orb_pointer;
 
-	pr_debug("tgt_orb ptr:0x%llx next_orb:0x%llx data_descriptor:0x%llx misc:0x%x\n",
-		req->orb_pointer,
+	pr_debug("tgt_orb ptr:0x%llx next_orb:0x%llx data_descriptor:0x%llx "
+		"misc:0x%x\n", req->orb_pointer,
 		sbp2_pointer_to_addr(&req->orb.next_orb),
 		sbp2_pointer_to_addr(&req->orb.data_descriptor),
 		be32_to_cpu(req->orb.misc));
@@ -295,9 +290,8 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	}
 
 	smp_rmb();
-	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE) {
+	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE)
 		return;
-	}
 
 	agent->orb_pointer = sbp2_pointer_to_addr(&req->orb.next_orb);
 

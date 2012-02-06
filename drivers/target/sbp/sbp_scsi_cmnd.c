@@ -54,7 +54,7 @@ static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
 	pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
 
 	if (pg_size) {
-		pr_err("sbp_run_transaction: page size not taken into account\n");
+		pr_err("sbp_run_transaction: page size ignored\n");
 		pg_size = 0x100 << pg_size;
 	}
 
@@ -91,7 +91,7 @@ static int sbp_fetch_command(struct sbp_target_request *req)
 		return -ENOMEM;
 
 	memcpy(req->cmd_buf, req->orb.command_block,
-		min(cmd_len, (int)sizeof(req->orb.command_block)));
+		min_t(int, cmd_len, sizeof(req->orb.command_block)));
 
 	if (cmd_len > sizeof(req->orb.command_block)) {
 		pr_debug("sbp_fetch_command: filling in long command\n");
@@ -111,6 +111,9 @@ static int sbp_fetch_page_table(struct sbp_target_request *req)
 {
 	int pg_tbl_sz, ret;
 	struct sbp_page_table_entry *pg_tbl;
+
+	if (!CMDBLK_ORB_PG_TBL_PRESENT(be32_to_cpu(req->orb.misc)))
+		return 0;
 
 	pg_tbl_sz = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc)) *
 		sizeof(struct sbp_page_table_entry);
@@ -175,19 +178,18 @@ void sbp_handle_command(struct sbp_target_request *req)
 		return;
 	}
 
-	if (CMDBLK_ORB_PG_TBL_PRESENT(be32_to_cpu(req->orb.misc))) {
-		ret = sbp_fetch_page_table(req);
-		if (ret) {
-			pr_err("sbp_handle_command: fetch page table failed: %d\n", ret);
-			req->status.status |= cpu_to_be32(
-				STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
-				STATUS_BLOCK_DEAD(0) |
-				STATUS_BLOCK_LEN(1) |
-				STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
-			sbp_send_status(req);
-			sbp_free_request(req);
-			return;
-		}
+	ret = sbp_fetch_page_table(req);
+	if (ret) {
+		pr_err("sbp_handle_command: fetch page table failed: %d\n",
+			ret);
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+		sbp_send_status(req);
+		sbp_free_request(req);
+		return;
 	}
 
 	req->unpacked_lun = req->agent->login->lun->unpacked_lun;
@@ -213,18 +215,21 @@ int sbp_rw_data(struct sbp_target_request *req)
 	WARN_ON(!req->data_len);
 
 	if (req->pg_tbl) {
-		int idx, offset = 0;
-		int data_size = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
+		int idx, offset = 0, data_size;
+
+		data_size = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
 
 		for (idx = 0; idx < data_size; idx++) {
-			int pte_len = be16_to_cpu(req->pg_tbl[idx].segment_length);
+			int pte_len = be16_to_cpu(
+				req->pg_tbl[idx].segment_length);
 			u64 pte_offset = (u64)be16_to_cpu(
 				req->pg_tbl[idx].segment_base_hi) << 32 |
 				be32_to_cpu(req->pg_tbl[idx].segment_base_lo);
 
 			ret = sbp_run_transaction(req,
 				(req->data_dir == DMA_TO_DEVICE) ?
-				TCODE_READ_BLOCK_REQUEST : TCODE_WRITE_BLOCK_REQUEST,
+				TCODE_READ_BLOCK_REQUEST :
+				TCODE_WRITE_BLOCK_REQUEST,
 				pte_offset, req->data_buf + offset, pte_len);
 			if (ret)
 				break;

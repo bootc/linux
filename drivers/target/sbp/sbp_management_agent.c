@@ -60,8 +60,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 
 	/* sanity check basic fields */
 	if (!ORB_NOTIFY(be32_to_cpu(req->orb.misc)) ||
-		ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc)) != 0)
-	{
+		ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc)) != 0) {
 		pr_err("mgt_orb bad request\n");
 		goto out;
 	}
@@ -176,9 +175,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		return;
 	}
 
-	if ((offset != agent->handler.offset) ||
-		(length != 8))
-	{
+	if ((offset != agent->handler.offset) || (length != 8)) {
 		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
 		return;
 	}
@@ -225,12 +222,10 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		}
 
 		fw_send_response(card, request, RCODE_COMPLETE);
-	}
-	else if (tcode == TCODE_READ_BLOCK_REQUEST) {
+	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
 		addr_to_sbp2_pointer(agent->orb_offset, ptr);
 		fw_send_response(card, request, RCODE_COMPLETE);
-	}
-	else {
+	} else {
 		fw_send_response(card, request, RCODE_TYPE_ERROR);
 	}
 }

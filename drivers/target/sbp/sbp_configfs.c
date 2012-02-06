@@ -192,7 +192,7 @@ static struct se_node_acl *sbp_make_nodeacl(
 	pr_info("sbp_make_nodeacl: %s\n", name);
 
 	if (sbp_parse_wwn(name, &guid, 1) < 0)
-	   return ERR_PTR(-EINVAL);
+		return ERR_PTR(-EINVAL);
 
 	se_nacl_new = sbp_alloc_fabric_acl(se_tpg);
 	if (!se_nacl_new)
@@ -288,7 +288,7 @@ static struct se_portal_group *sbp_make_tpg(
 
 	if (strstr(name, "unit_") != name)
 		return ERR_PTR(-EINVAL);
-	if (strict_strtoul(name + 5, 10, &tpgt) || tpgt > UINT_MAX)
+	if (kstrtoul(name + 5, 10, &tpgt) || tpgt > UINT_MAX)
 		return ERR_PTR(-EINVAL);
 
 	tpg = kzalloc(sizeof(*tpg), GFP_KERNEL);
@@ -393,11 +393,11 @@ static ssize_t sbp_tpg_store_enable(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	char *endptr;
-	u32 val;
+	unsigned long val;
 	int ret;
 
-	val = simple_strtoul(page, &endptr, 0);
+	if (kstrtoul(page, 0, &val) < 0)
+		return -EINVAL;
 	if ((val != 0) && (val != 1))
 		return -EINVAL;
 
@@ -442,11 +442,11 @@ static ssize_t sbp_tpg_attrib_store_mgt_orb_timeout(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	char *endptr;
-	u32 val;
+	unsigned long val;
 	int ret;
 
-	val = simple_strtoul(page, &endptr, 0);
+	if (kstrtoul(page, 0, &val) < 0)
+		return -EINVAL;
 	if ((val < 1) || (val > 127))
 		return -EINVAL;
 
@@ -476,11 +476,11 @@ static ssize_t sbp_tpg_attrib_store_max_reconnect_timeout(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	char *endptr;
-	u32 val;
+	unsigned long val;
 	int ret;
 
-	val = simple_strtoul(page, &endptr, 0);
+	if (kstrtoul(page, 0, &val) < 0)
+		return -EINVAL;
 	if ((val < 0) || (val > 32767))
 		return -EINVAL;
 
@@ -510,10 +510,10 @@ static ssize_t sbp_tpg_attrib_store_max_logins_per_lun(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	char *endptr;
-	u32 val;
+	unsigned long val;
 
-	val = simple_strtoul(page, &endptr, 0);
+	if (kstrtoul(page, 0, &val) < 0)
+		return -EINVAL;
 	if ((val < 1) || (val > 127))
 		return -EINVAL;
 
