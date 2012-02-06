@@ -264,29 +264,91 @@ int sbp_send_status(struct sbp_target_request *req)
 	return 0;
 }
 
-int sbp_send_sense(struct sbp_target_request *req)
+static void sbp_sense_mangle(struct sbp_target_request *req)
 {
 	struct se_cmd *se_cmd = &req->se_cmd;
-	int ret, sense_len;
+	u8 *sense = req->sense_buf;
+	u8 *status = req->status.data;
 
-	sense_len = min((int)se_cmd->scsi_sense_length,
-		(int)sizeof(req->status.data));
-	if (sense_len) {
-		memcpy(req->status.data, req->sense_buf, sense_len);
-		print_hex_dump_bytes("sense: ", DUMP_PREFIX_OFFSET,
-			req->sense_buf, se_cmd->scsi_sense_length);
+	print_hex_dump_bytes("sense: ", DUMP_PREFIX_OFFSET, sense,
+		se_cmd->scsi_sense_length);
 
-		pr_err("sbp_send_sense: not doing the right thing yet\n");
+	WARN_ON(se_cmd->scsi_sense_length < 18);
+
+	switch (sense[0] & 0x7f) {
+	case 0x70:
+		status[0] = 0 << 6;		/* sfmt */
+		break;
+	case 0x71:
+		status[0] = 1 << 6;		/* sfmt */
+		break;
+	default:
+		/*
+		 * TODO: SBP-3 specifies what we should do with descriptor
+		 * format sense data
+		 */
+		pr_err("sbp_send_sense: unknown sense format: 0x%x\n",
+			sense[0]);
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_REQUEST_ABORTED));
+		return;
 	}
+
+	status[0] |= se_cmd->scsi_status & 0x3f;/* status */
+	status[1] =
+		(sense[0] & 0x80) |		/* valid */
+		((sense[2] & 0xe0) >> 1) |	/* mark, eom, ili */
+		(sense[2] & 0x0f);		/* sense_key */
+	status[2] = se_cmd->scsi_asc;		/* sense_code */
+	status[3] = se_cmd->scsi_ascq;		/* sense_qualifier */
+
+	/* information */
+	status[4] = sense[3];
+	status[5] = sense[4];
+	status[6] = sense[5];
+	status[7] = sense[6];
+
+	/* CDB-dependent */
+	status[8] = sense[8];
+	status[9] = sense[9];
+	status[10] = sense[10];
+	status[11] = sense[11];
+
+	status[12] = sense[14];			/* fru */
+
+	/* sense_key-dependent */
+	status[13] = sense[15];
+	status[14] = sense[16];
+	status[15] = sense[17];
 
 	req->status.status |= cpu_to_be32(
 		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
 		STATUS_BLOCK_DEAD(0) |
-		STATUS_BLOCK_LEN(DIV_ROUND_UP(sense_len, 4) + 1) |
+		STATUS_BLOCK_LEN(5) |
 		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
-	ret = sbp_send_status(req);
 
-	return ret;
+	print_hex_dump_bytes("status: ", DUMP_PREFIX_OFFSET, &req->status,
+		sizeof(req->status));
+}
+
+int sbp_send_sense(struct sbp_target_request *req)
+{
+	struct se_cmd *se_cmd = &req->se_cmd;
+
+	if (se_cmd->scsi_sense_length)
+		sbp_sense_mangle(req);
+	else {
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
+	}
+
+	return sbp_send_status(req);
 }
 
 void sbp_free_request(struct sbp_target_request *req)
