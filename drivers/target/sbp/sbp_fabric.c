@@ -214,8 +214,11 @@ void sbp_set_default_node_attrs(struct se_node_acl *nacl)
 
 u32 sbp_get_task_tag(struct se_cmd *se_cmd)
 {
-	/* FIXME */
-	return 0;
+	struct sbp_target_request *req = container_of(se_cmd,
+			struct sbp_target_request, se_cmd);
+
+	/* only used for printk and family? */
+	return (u32)req->orb_pointer;
 }
 
 int sbp_get_cmd_state(struct se_cmd *se_cmd)
