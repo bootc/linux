@@ -1,5 +1,4 @@
 * Force-terminate sessions when disabling targets
-* Take into account the reconnect timeout and expire sessions
 * Ability to have several SCSI commands in-flight (TCQ?)
 * Retry failed FireWire transactions a few times with exponential backoff
 * Take into account the page_size field for transfers and/or page tables

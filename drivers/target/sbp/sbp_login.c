@@ -37,7 +37,11 @@
 #include "sbp_target_agent.h"
 #include "sbp_util.h"
 
+#define SESSION_MAINTENANCE_INTERVAL HZ
+
 static atomic_t login_id = ATOMIC_INIT(0);
+
+static void session_maintenance_work(struct work_struct *work);
 
 static int read_peer_guid(u64 *guid, const struct sbp_management_request *req)
 {
@@ -194,6 +198,7 @@ static struct sbp_session *sbp_session_create(
 
 	INIT_LIST_HEAD(&sess->login_list);
 	sess->se_sess->se_node_acl = se_nacl;
+	INIT_DELAYED_WORK(&sess->maint_work, session_maintenance_work);
 	sess->guid = guid;
 
 	transport_register_session(&tpg->se_tpg, se_nacl, sess->se_sess, sess);
@@ -201,7 +206,7 @@ static struct sbp_session *sbp_session_create(
 	return sess;
 }
 
-static void sbp_session_release(struct sbp_session *sess)
+static void sbp_session_release(struct sbp_session *sess, bool cancel_work)
 {
 	if (!list_empty(&sess->login_list))
 		return;
@@ -212,16 +217,20 @@ static void sbp_session_release(struct sbp_session *sess)
 	if (sess->card)
 		fw_card_put(sess->card);
 
+	if (cancel_work)
+		cancel_delayed_work_sync(&sess->maint_work);
+
 	kfree(sess);
 }
 
-static void sbp_login_release(struct sbp_login_descriptor *login)
+static void sbp_login_release(struct sbp_login_descriptor *login,
+	bool cancel_work)
 {
 	/* FIXME: abort/wait on tasks */
 
 	list_del(&login->link);
 	sbp_target_agent_unregister(login->tgt_agt);
-	sbp_session_release(login->sess);
+	sbp_session_release(login->sess, cancel_work);
 	kfree(login);
 }
 
@@ -352,14 +361,22 @@ void sbp_management_request_login(
 		sess->card = fw_card_get(req->card);
 		sess->generation = req->generation;
 		sess->speed = req->speed;
+
+		queue_delayed_work(fw_workqueue, &sess->maint_work,
+			SESSION_MAINTENANCE_INTERVAL);
 	}
+
+	/* only take the latest reconnect_hold into account */
+	sess->reconnect_hold = min(
+		1 << LOGIN_ORB_RECONNECT(be32_to_cpu(req->orb.misc)),
+		tpg->max_reconnect_timeout) - 1;
 
 	/* create new login descriptor */
 	login = kmalloc(sizeof(*login), GFP_KERNEL);
 	if (!login) {
 		pr_err("failed to allocate login descriptor\n");
 
-		sbp_session_release(sess);
+		sbp_session_release(sess, true);
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -371,7 +388,6 @@ void sbp_management_request_login(
 	login->lun = lun;
 	login->status_fifo_addr = sbp2_pointer_to_addr(&req->orb.status_fifo);
 	login->exclusive = LOGIN_ORB_EXCLUSIVE(be32_to_cpu(req->orb.misc));
-	login->reconnect_hold = 30; /* FIXME */
 	login->login_id = atomic_inc_return(&login_id);
 	atomic_set(&login->unsolicited_status_enable, 0);
 
@@ -381,7 +397,7 @@ void sbp_management_request_login(
 		ret = PTR_ERR(login->tgt_agt);
 		pr_err("failed to map command block handler: %d\n", ret);
 
-		sbp_session_release(sess);
+		sbp_session_release(sess, true);
 		kfree(login);
 
 		req->status.status = cpu_to_be32(
@@ -399,7 +415,7 @@ already_logged_in:
 	if (!response) {
 		pr_err("failed to allocate login response block\n");
 
-		sbp_login_release(login);
+		sbp_login_release(login, true);
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -412,7 +428,7 @@ already_logged_in:
 	response->misc = cpu_to_be32(
 		((login_response_len & 0xffff) << 16) |
 		(login->login_id & 0xffff));
-	response->reconnect_hold = cpu_to_be32(login->reconnect_hold & 0xffff);
+	response->reconnect_hold = cpu_to_be32(sess->reconnect_hold & 0xffff);
 	addr_to_sbp2_pointer(login->tgt_agt->handler.offset,
 		&response->command_block_agent);
 
@@ -424,7 +440,7 @@ already_logged_in:
 		pr_warn("failed to write login response block: %d\n", ret);
 
 		kfree(response);
-		sbp_login_release(login);
+		sbp_login_release(login, true);
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
@@ -498,6 +514,9 @@ void sbp_management_request_reconnect(
 		return;
 	}
 
+	if (login->sess->card)
+		fw_card_put(login->sess->card);
+
 	/* update the node details */
 	login->sess->generation = req->generation;
 	login->sess->node_id = req->node_addr;
@@ -543,15 +562,77 @@ void sbp_management_request_logout(
 		return;
 	}
 
-	/* FIXME: Abort all pending operations */
-
 	/* Perform logout */
-	sbp_login_release(login);
+	sbp_login_release(login, true);
 
 	pr_info("logout successful!\n");
 
 	req->status.status = cpu_to_be32(
 		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
 		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
+}
+
+static void session_check_for_reset(struct sbp_session *sess)
+{
+	bool card_valid = false;
+
+	if (sess->card) {
+		spin_lock_irq(&sess->card->lock);
+		card_valid = (sess->card->local_node != NULL);
+		spin_unlock_irq(&sess->card->lock);
+
+		if (!card_valid) {
+			fw_card_put(sess->card);
+			sess->card = NULL;
+		}
+	}
+
+	if (!card_valid || (sess->generation != sess->card->generation)) {
+		pr_info("Waiting for reconnect from node: %016llx\n",
+			sess->guid);
+
+		sess->node_id = -1;
+		sess->reconnect_expires = get_jiffies_64() +
+			((sess->reconnect_hold + 1) * HZ);
+	}
+}
+
+static void session_reconnect_expired(struct sbp_session *sess)
+{
+	struct sbp_login_descriptor *login, *temp;
+
+	pr_info("Reconnect timer expired for node: %016llx\n",
+		sess->guid);
+
+	list_for_each_entry_safe(login, temp, &sess->login_list, link) {
+		sbp_login_release(login, false);
+	}
+
+	/* sbp_login_release() calls sbp_session_release() */
+}
+
+static void session_maintenance_work(struct work_struct *work)
+{
+	struct sbp_session *sess = container_of(work, struct sbp_session,
+		maint_work.work);
+
+	/* could be called while tearing down the session */
+	if (list_empty(&sess->login_list))
+		return;
+
+	if (sess->node_id != -1) {
+		/* check for bus reset and make node_id invalid */
+		session_check_for_reset(sess);
+
+		queue_delayed_work(fw_workqueue, &sess->maint_work,
+			SESSION_MAINTENANCE_INTERVAL);
+	} else if (!time_after64(get_jiffies_64(), sess->reconnect_expires)) {
+		/* still waiting for reconnect */
+		queue_delayed_work(fw_workqueue, &sess->maint_work,
+			SESSION_MAINTENANCE_INTERVAL);
+	} else {
+		/* reconnect timeout has expired */
+		session_reconnect_expired(sess);
+	}
 }
 

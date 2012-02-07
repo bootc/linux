@@ -122,7 +122,6 @@ struct sbp_login_descriptor {
 	u64 status_fifo_addr;
 	int exclusive;
 	u16 login_id;
-	int reconnect_hold;
 	atomic_t unsolicited_status_enable;
 
 	struct sbp_target_agent *tgt_agt;
@@ -131,6 +130,7 @@ struct sbp_login_descriptor {
 struct sbp_session {
 	struct se_session *se_sess;
 	struct list_head login_list;
+	struct delayed_work maint_work;
 
 	u64 guid; /* login_owner_EUI_64 */
 	int node_id; /* login_owner_ID */
@@ -138,6 +138,9 @@ struct sbp_session {
 	struct fw_card *card;
 	int generation;
 	int speed;
+
+	int reconnect_hold;
+	u64 reconnect_expires;
 };
 
 struct sbp_nacl {

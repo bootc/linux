@@ -303,7 +303,7 @@ static struct se_portal_group *sbp_make_tpg(
 	/* default attribute values */
 	tpg->enable = 0;
 	tpg->mgt_orb_timeout = 15;
-	tpg->max_reconnect_timeout = 3;
+	tpg->max_reconnect_timeout = 5;
 	tpg->max_logins_per_lun = 1;
 
 	INIT_LIST_HEAD(&tpg->lun_list);
@@ -482,7 +482,7 @@ static ssize_t sbp_tpg_attrib_store_max_reconnect_timeout(
 
 	if (kstrtoul(page, 0, &val) < 0)
 		return -EINVAL;
-	if ((val < 0) || (val > 32767))
+	if ((val < 1) || (val > 32767))
 		return -EINVAL;
 
 	if (tpg->max_reconnect_timeout == val)
