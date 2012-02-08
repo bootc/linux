@@ -206,7 +206,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		req->card = fw_card_get(card);
 		req->generation = generation;
 		req->node_addr = source;
-		req->speed = fw_request_speed(request);
+		req->speed = fw_get_request_speed(request);
 
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
