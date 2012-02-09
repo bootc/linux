@@ -51,7 +51,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		goto out;
 	}
 
-	pr_info("mgt_orb ptr1:0x%llx ptr2:0x%llx misc:0x%x len:0x%x "
+	pr_debug("mgt_orb ptr1:0x%llx ptr2:0x%llx misc:0x%x len:0x%x "
 		"status_fifo:0x%llx\n",
 		sbp2_pointer_to_addr(&req->orb.ptr1),
 		sbp2_pointer_to_addr(&req->orb.ptr2),

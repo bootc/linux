@@ -437,7 +437,7 @@ already_logged_in:
 		sbp2_pointer_to_addr(&req->orb.ptr2), response,
 		login_response_len);
 	if (ret != RCODE_COMPLETE) {
-		pr_warn("failed to write login response block: %d\n", ret);
+		pr_debug("failed to write login response block: %x\n", ret);
 
 		kfree(response);
 		sbp_login_release(login, true);
@@ -447,9 +447,6 @@ already_logged_in:
 			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
 		return;
 	}
-
-	pr_notice("mgt_agent LOGIN to LUN %d from %016llx session %d\n",
-		lun->unpacked_lun, guid, login->login_id);
 
 	kfree(response);
 

@@ -70,7 +70,7 @@ static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
 			sess->node_id, sess->generation, speed,
 			offset + seg_off, payload + seg_off, seg_len);
 		if (ret != RCODE_COMPLETE) {
-			pr_err("sbp_run_transaction: txn failed: %x\n", ret);
+			pr_debug("sbp_run_transaction: txn failed: %x\n", ret);
 			return -EIO;
 		}
 
@@ -257,7 +257,7 @@ int sbp_send_status(struct sbp_target_request *req)
 	ret = sbp_run_transaction(req, TCODE_WRITE_BLOCK_REQUEST,
 		login->status_fifo_addr, &req->status, length);
 	if (ret) {
-		pr_err("sbp_send_status: write failed: %d\n", ret);
+		pr_debug("sbp_send_status: write failed: %d\n", ret);
 		return ret;
 	}
 
@@ -269,9 +269,6 @@ static void sbp_sense_mangle(struct sbp_target_request *req)
 	struct se_cmd *se_cmd = &req->se_cmd;
 	u8 *sense = req->sense_buf;
 	u8 *status = req->status.data;
-
-	print_hex_dump_bytes("sense: ", DUMP_PREFIX_OFFSET, sense,
-		se_cmd->scsi_sense_length);
 
 	WARN_ON(se_cmd->scsi_sense_length < 18);
 
@@ -329,9 +326,6 @@ static void sbp_sense_mangle(struct sbp_target_request *req)
 		STATUS_BLOCK_DEAD(0) |
 		STATUS_BLOCK_LEN(5) |
 		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
-
-	print_hex_dump_bytes("status: ", DUMP_PREFIX_OFFSET, &req->status,
-		sizeof(req->status));
 }
 
 int sbp_send_sense(struct sbp_target_request *req)
