@@ -182,6 +182,8 @@ struct sbp_tpg {
 };
 
 struct sbp_tport {
+	/* Target Unit Identifier (EUI-64) */
+	u64 guid;
 	/* Target port name */
 	char tport_name[SBP_NAMELEN];
 	/* Returned by sbp_make_tport() */

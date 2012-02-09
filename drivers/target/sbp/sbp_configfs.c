@@ -84,13 +84,16 @@ static int sbp_update_unit_directory(struct sbp_tpg *tpg)
 	 *  - management_agent
 	 *  - unit_characteristics
 	 *  - reconnect_timeout
+	 *  - unit unique ID
 	 *  - one for each LUN
+	 *
+	 *  MUST NOT include leaf or directory entries
 	 */
-	num_entries = ARRAY_SIZE(sbp_unit_directory_template) + 3 + num_luns;
+	num_entries = ARRAY_SIZE(sbp_unit_directory_template) + 4 + num_luns;
 
-	/* allocate num_entries + 1 for the header */
+	/* allocate num_entries + 4 for the header and unique ID leaf */
 	tpg->unit_directory_data =
-		kmalloc((num_entries + 1) * sizeof(u32), GFP_KERNEL);
+		kmalloc((num_entries + 4) * sizeof(u32), GFP_KERNEL);
 	if (!tpg->unit_directory_data)
 		return -ENOMEM;
 
@@ -116,6 +119,10 @@ static int sbp_update_unit_directory(struct sbp_tpg *tpg)
 	tpg->unit_directory_data[idx++] = 0x3d000000 |
 		(tpg->max_reconnect_timeout & 0xffff);
 
+	/* unit unique ID (leaf is just after LUNs) */
+	tpg->unit_directory_data[idx++] = 0x8d000000 | (num_luns + 1);
+
+	/* LUNs */
 	list_for_each_entry(lun, &tpg->lun_list, link) {
 		struct se_lun *se_lun = lun->se_lun;
 		struct se_device *dev = se_lun->lun_se_dev;
@@ -127,7 +134,12 @@ static int sbp_update_unit_directory(struct sbp_tpg *tpg)
 			(se_lun->unpacked_lun & 0xffff);
 	}
 
-	tpg->unit_directory.length = (num_entries + 1);
+	/* unit unique ID leaf */
+	tpg->unit_directory_data[idx++] = 2 << 16;
+	tpg->unit_directory_data[idx++] = (tpg->tport->guid >> 32) & 0xffffffff;
+	tpg->unit_directory_data[idx++] = tpg->tport->guid & 0xffffffff;
+
+	tpg->unit_directory.length = idx;
 	tpg->unit_directory.key = (CSR_DIRECTORY | CSR_UNIT) << 24;
 	tpg->unit_directory.data = tpg->unit_directory_data;
 
@@ -286,10 +298,14 @@ static struct se_portal_group *sbp_make_tpg(
 
 	pr_info("sbp_make_tpg: %s\n", name);
 
-	if (strstr(name, "unit_") != name)
+	if (strstr(name, "tpgt_") != name)
 		return ERR_PTR(-EINVAL);
 	if (kstrtoul(name + 5, 10, &tpgt) || tpgt > UINT_MAX)
 		return ERR_PTR(-EINVAL);
+	if (tpgt != 0) {
+		pr_err("Only one TPG per Unit is possible.\n");
+		return ERR_PTR(-EINVAL);
+	}
 
 	tpg = kzalloc(sizeof(*tpg), GFP_KERNEL);
 	if (!tpg) {
@@ -342,8 +358,12 @@ static struct se_wwn *sbp_make_tport(
 		const char *name)
 {
 	struct sbp_tport *tport;
+	u64 guid = 0;
 
 	pr_info("sbp_make_tport: %s\n", name);
+
+	if (sbp_parse_wwn(name, &guid, 1) < 0)
+		return ERR_PTR(-EINVAL);
 
 	tport = kzalloc(sizeof(*tport), GFP_KERNEL);
 	if (!tport) {
@@ -351,7 +371,8 @@ static struct se_wwn *sbp_make_tport(
 		return ERR_PTR(-ENOMEM);
 	}
 
-	strncpy(tport->tport_name, name, SBP_NAMELEN);
+	tport->guid = guid;
+	sbp_format_wwn(tport->tport_name, SBP_NAMELEN, guid);
 
 	return &tport->tport_wwn;
 }
@@ -405,8 +426,10 @@ static ssize_t sbp_tpg_store_enable(
 		return count;
 
 	if (val) {
-		if (list_empty(&tpg->lun_list))
+		if (list_empty(&tpg->lun_list)) {
+			pr_err("Cannot enable a target with no LUNs!\n");
 			return -EINVAL;
+		}
 	} else {
 		/* FIXME: force-shutdown sessions instead */
 		if (!list_empty(&se_tpg->tpg_sess_list))
@@ -416,8 +439,10 @@ static ssize_t sbp_tpg_store_enable(
 	tpg->enable = val;
 
 	ret = sbp_update_unit_directory(tpg);
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err("Could not update Config ROM\n");
 		return ret;
+	}
 
 	return count;
 }
