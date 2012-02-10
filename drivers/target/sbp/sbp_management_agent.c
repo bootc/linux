@@ -47,7 +47,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		req->node_addr, req->generation, req->speed,
 		agent->orb_offset, &req->orb, sizeof(req->orb));
 	if (ret != RCODE_COMPLETE) {
-		pr_err("mgt_orb fetch failed: %x\n", ret);
+		pr_debug("mgt_orb fetch failed: %x\n", ret);
 		goto out;
 	}
 
@@ -80,7 +80,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 
 	case MANAGEMENT_ORB_FUNCTION_SET_PASSWORD:
-		pr_notice("mgt_agent SET PASSWORD\n");
+		pr_notice("SET PASSWORD not implemented\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -93,7 +93,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 
 	case MANAGEMENT_ORB_FUNCTION_ABORT_TASK:
-		pr_notice("mgt_agent ABORT TASK\n");
+		pr_notice("ABORT TASK not implemented\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -102,7 +102,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 
 	case MANAGEMENT_ORB_FUNCTION_ABORT_TASK_SET:
-		pr_notice("mgt_agent ABORT TASK SET\n");
+		pr_notice("ABORT TASK SET not implemented\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -111,7 +111,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 
 	case MANAGEMENT_ORB_FUNCTION_LOGICAL_UNIT_RESET:
-		pr_notice("mgt_agent LOGICAL UNIT RESET\n");
+		pr_notice("LOGICAL UNIT RESET not implemented\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -120,7 +120,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 
 	case MANAGEMENT_ORB_FUNCTION_TARGET_RESET:
-		pr_notice("mgt_agent TARGET RESET\n");
+		pr_notice("TARGET RESET not implemented\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -129,7 +129,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 
 	default:
-		pr_notice("mgt_agent UNKNOWN func:0x%x\n",
+		pr_notice("unknown management function 0x%x\n",
 			MANAGEMENT_ORB_FUNCTION(be32_to_cpu(req->orb.misc)));
 
 		req->status.status = cpu_to_be32(
@@ -152,7 +152,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		sbp2_pointer_to_addr(&req->orb.status_fifo),
 		&req->status, 8 + status_data_len);
 	if (ret != RCODE_COMPLETE) {
-		pr_err("mgt_orb status write failed: %x\n", ret);
+		pr_debug("mgt_orb status write failed: %x\n", ret);
 		goto out;
 	}
 
@@ -189,7 +189,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 					MANAGEMENT_AGENT_STATE_IDLE,
 					MANAGEMENT_AGENT_STATE_BUSY) !=
 				MANAGEMENT_AGENT_STATE_IDLE) {
-			pr_warn("mgt_agent ignoring request while busy\n");
+			pr_notice("ignoring management request while busy\n");
 
 			fw_send_response(card, request, RCODE_CONFLICT_ERROR);
 			return;
@@ -197,8 +197,6 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 
 		req = kzalloc(sizeof(*req), GFP_ATOMIC);
 		if (!req) {
-			pr_err("mgt_agent kzalloc failed\n");
-
 			fw_send_response(card, request, RCODE_CONFLICT_ERROR);
 			return;
 		}

@@ -41,7 +41,7 @@ static int tgt_agent_rw_agent_state(struct fw_card *card,
 	if (tcode == TCODE_READ_QUADLET_REQUEST) {
 		__be32 state;
 
-		pr_notice("tgt_agent AGENT_STATE READ");
+		pr_debug("tgt_agent AGENT_STATE READ\n");
 
 		state = cpu_to_be32(atomic_read(&agent->state));
 		memcpy(data, &state, sizeof(state));
@@ -59,7 +59,7 @@ static int tgt_agent_rw_agent_reset(struct fw_card *card,
 	struct sbp_target_agent *agent)
 {
 	if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-		pr_debug("tgt_agent AGENT_RESET");
+		pr_debug("tgt_agent AGENT_RESET\n");
 		atomic_set(&agent->state, AGENT_STATE_RESET);
 		return RCODE_COMPLETE;
 	} else
@@ -87,13 +87,16 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 
 		agent->orb_pointer = sbp2_pointer_to_addr(ptr);
 
+		pr_debug("tgt_agent ORB_POINTER write: %llu\n",
+			agent->orb_pointer);
+
 		ret = queue_work(fw_workqueue, &agent->work);
 		if (!ret)
 			return RCODE_CONFLICT_ERROR;
 
 		return RCODE_COMPLETE;
 	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
-		pr_notice("tgt_agent ORB_POINTER READ");
+		pr_debug("tgt_agent ORB_POINTER READ\n");
 		addr_to_sbp2_pointer(agent->orb_pointer, ptr);
 		return RCODE_COMPLETE;
 	} else
@@ -114,7 +117,7 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 			return RCODE_CONFLICT_ERROR;
 		smp_wmb();
 
-		pr_notice("tgt_agent DOORBELL");
+		pr_debug("tgt_agent DOORBELL\n");
 
 		ret = queue_work(fw_workqueue, &agent->work);
 		if (!ret)
@@ -132,7 +135,7 @@ static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
 	struct sbp_target_agent *agent)
 {
 	if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-		pr_notice("tgt_agent UNSOLICITED_STATUS_ENABLE");
+		pr_debug("tgt_agent UNSOLICITED_STATUS_ENABLE\n");
 		atomic_set(&agent->login->unsolicited_status_enable, 1);
 		return RCODE_COMPLETE;
 	} else if (tcode == TCODE_READ_QUADLET_REQUEST)
@@ -154,7 +157,7 @@ static void tgt_agent_rw(struct fw_card *card,
 
 	/* check the source matches the login */
 	if (source != agent->login->sess->node_id) {
-		pr_warn("tgt_agent request from different node (%x != %x)\n",
+		pr_notice("ignoring request from foreign node (%x != %x)\n",
 			source, agent->login->sess->node_id);
 		fw_send_response(card, request, RCODE_TYPE_ERROR);
 		return;
@@ -245,7 +248,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		sess->node_id, sess->generation, sess->speed,
 		agent->orb_pointer, &req->orb, sizeof(req->orb));
 	if (ret != RCODE_COMPLETE) {
-		pr_err("tgt_orb fetch failed: %x\n", ret);
+		pr_debug("tgt_orb fetch failed: %x\n", ret);
 		sbp_free_request(req);
 		goto out;
 	}
@@ -281,6 +284,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	if (!ret) {
 		pr_err("tgt_orb queue_work failed\n");
 		sbp_free_request(req);
+		goto out;
 	}
 
 	/* check if we should carry on processing */

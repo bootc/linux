@@ -309,7 +309,7 @@ static struct se_portal_group *sbp_make_tpg(
 
 	tpg = kzalloc(sizeof(*tpg), GFP_KERNEL);
 	if (!tpg) {
-		pr_err("Unable to allocate struct sbp_tpg");
+		pr_err("Unable to allocate struct sbp_tpg\n");
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -367,7 +367,7 @@ static struct se_wwn *sbp_make_tport(
 
 	tport = kzalloc(sizeof(*tport), GFP_KERNEL);
 	if (!tport) {
-		pr_err("Unable to allocate struct sbp_tport");
+		pr_err("Unable to allocate struct sbp_tport\n");
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -650,8 +650,7 @@ static int sbp_register_configfs(void)
 	 */
 	ret = target_fabric_configfs_register(fabric);
 	if (ret < 0) {
-		pr_err("target_fabric_configfs_register() failed"
-				" for SBP\n");
+		pr_err("target_fabric_configfs_register() failed for SBP\n");
 		return ret;
 	}
 

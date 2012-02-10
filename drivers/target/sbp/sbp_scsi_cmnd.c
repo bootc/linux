@@ -167,7 +167,7 @@ void sbp_handle_command(struct sbp_target_request *req)
 
 	ret = sbp_fetch_command(req);
 	if (ret) {
-		pr_err("sbp_handle_command: fetch command failed: %d\n", ret);
+		pr_debug("sbp_handle_command: fetch command failed: %d\n", ret);
 		req->status.status |= cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
 			STATUS_BLOCK_DEAD(0) |
@@ -180,7 +180,7 @@ void sbp_handle_command(struct sbp_target_request *req)
 
 	ret = sbp_fetch_page_table(req);
 	if (ret) {
-		pr_err("sbp_handle_command: fetch page table failed: %d\n",
+		pr_debug("sbp_handle_command: fetch page table failed: %d\n",
 			ret);
 		req->status.status |= cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |

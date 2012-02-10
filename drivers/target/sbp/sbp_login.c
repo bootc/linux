@@ -188,7 +188,7 @@ static struct sbp_session *sbp_session_create(
 
 	se_nacl = core_tpg_check_initiator_node_acl(&tpg->se_tpg, guid_str);
 	if (!se_nacl) {
-		pr_warn("NodeACL not found for %s\n", guid_str);
+		pr_warn("Node ACL not found for %s\n", guid_str);
 
 		transport_free_session(sess->se_sess);
 		kfree(sess);
@@ -251,7 +251,7 @@ void sbp_management_request_login(
 	lun = sbp_get_lun_from_tpg(tpg,
 			LOGIN_ORB_LUN(be32_to_cpu(req->orb.misc)));
 	if (IS_ERR(lun)) {
-		pr_notice("login to unknown LUN: %d",
+		pr_notice("login to unknown LUN: %d\n",
 			LOGIN_ORB_LUN(be32_to_cpu(req->orb.misc)));
 
 		req->status.status = cpu_to_be32(
@@ -263,7 +263,7 @@ void sbp_management_request_login(
 	/* read the peer's GUID */
 	ret = read_peer_guid(&guid, req);
 	if (ret != RCODE_COMPLETE) {
-		pr_warn("failed to read peer GUID: %d", ret);
+		pr_warn("failed to read peer GUID: %d\n", ret);
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
@@ -284,7 +284,7 @@ void sbp_management_request_login(
 	if (sess) {
 		login = sbp_login_find_by_lun(sess, lun);
 		if (login) {
-			pr_warn("initiator already logged-in");
+			pr_notice("initiator already logged-in\n");
 
 			/*
 			 * SBP-2 R4 says we should return access denied, but
@@ -303,7 +303,7 @@ void sbp_management_request_login(
 	 */
 	if (LOGIN_ORB_EXCLUSIVE(be32_to_cpu(req->orb.misc)) &&
 		sbp_login_count_all_by_lun(tpg, lun, 0)) {
-		pr_warn("refusing exclusive login with other active logins");
+		pr_warn("refusing exclusive login with other active logins\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -316,7 +316,7 @@ void sbp_management_request_login(
 	 * reject with access_denied if any exclusive logins present
 	 */
 	if (sbp_login_count_all_by_lun(tpg, lun, 1)) {
-		pr_warn("refusing login while another exclusive login present");
+		pr_warn("refusing login while another exclusive login present\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -330,7 +330,7 @@ void sbp_management_request_login(
 	 */
 	if (sbp_login_count_all_by_lun(tpg, lun, 0) >=
 		tpg->max_logins_per_lun) {
-		pr_warn("max number of logins reached");
+		pr_warn("max number of logins reached\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -459,7 +459,7 @@ void sbp_management_request_query_logins(
 	struct sbp_management_agent *agent, struct sbp_management_request *req,
 	int *status_data_size)
 {
-	pr_notice("mgt_agent QUERY LOGINS\n");
+	pr_notice("QUERY LOGINS not implemented\n");
 	/* FIXME: implement */
 
 	req->status.status = cpu_to_be32(
@@ -479,7 +479,7 @@ void sbp_management_request_reconnect(
 	/* read the peer's GUID */
 	ret = read_peer_guid(&guid, req);
 	if (ret != RCODE_COMPLETE) {
-		pr_warn("failed to read peer GUID: %d", ret);
+		pr_warn("failed to read peer GUID: %d\n", ret);
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
@@ -538,7 +538,7 @@ void sbp_management_request_logout(
 	/* Find login by ID */
 	login = sbp_login_find_by_id(tpg, login_id);
 	if (!login) {
-		pr_warn("cannot find login: %d", login_id);
+		pr_warn("cannot find login: %d\n", login_id);
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
@@ -551,7 +551,7 @@ void sbp_management_request_logout(
 
 	/* Check source against login's node_id */
 	if (req->node_addr != login->sess->node_id) {
-		pr_warn("logout from different node ID");
+		pr_warn("logout from different node ID\n");
 
 		req->status.status = cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
