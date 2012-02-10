@@ -41,5 +41,6 @@ source "drivers/target/tcm_fc/Kconfig"
 source "drivers/target/iscsi/Kconfig"
 source "drivers/target/tcm_vhost/Kconfig"
 source "drivers/target/usb-gadget/Kconfig"
+source "drivers/target/sbp/Kconfig"
 
 endif
