@@ -1,0 +1,7 @@
+* Force-terminate sessions when disabling targets
+* Ability to have several SCSI commands in-flight (TCQ?)
+* Retry failed FireWire transactions a few times with exponential backoff
+* Take into account the page_size field for transfers and/or page tables
+* Handle descriptor format sense data
+* Implement QUERY LOGINS management ORB
+* Implement TASK MANAGEMENT functionality
