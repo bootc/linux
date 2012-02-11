@@ -33,3 +33,4 @@ const struct fw_address_region sbp_register_region = {
 	.start = CSR_REGISTER_BASE + 0x10000,
 	.end   = 0x1000000000000ULL,
 };
+

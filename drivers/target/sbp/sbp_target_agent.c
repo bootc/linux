@@ -47,11 +47,12 @@ static int tgt_agent_rw_agent_state(struct fw_card *card,
 		memcpy(data, &state, sizeof(state));
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+	} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
 		/* ignored */
 		return RCODE_COMPLETE;
-	else
+	} else {
 		return RCODE_TYPE_ERROR;
+	}
 }
 
 static int tgt_agent_rw_agent_reset(struct fw_card *card,
@@ -62,8 +63,9 @@ static int tgt_agent_rw_agent_reset(struct fw_card *card,
 		pr_debug("tgt_agent AGENT_RESET\n");
 		atomic_set(&agent->state, AGENT_STATE_RESET);
 		return RCODE_COMPLETE;
-	} else
+	} else {
 		return RCODE_TYPE_ERROR;
+	}
 }
 
 static int tgt_agent_rw_orb_pointer(struct fw_card *card,
@@ -77,11 +79,12 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 
 		smp_wmb();
 		atomic_cmpxchg(&agent->state,
-			AGENT_STATE_RESET, AGENT_STATE_SUSPENDED);
+				AGENT_STATE_RESET, AGENT_STATE_SUSPENDED);
 		smp_wmb();
 		if (atomic_cmpxchg(&agent->state,
-			AGENT_STATE_SUSPENDED, AGENT_STATE_ACTIVE) !=
-			AGENT_STATE_SUSPENDED)
+					AGENT_STATE_SUSPENDED,
+					AGENT_STATE_ACTIVE)
+				!= AGENT_STATE_SUSPENDED)
 			return RCODE_CONFLICT_ERROR;
 		smp_wmb();
 
@@ -99,8 +102,9 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 		pr_debug("tgt_agent ORB_POINTER READ\n");
 		addr_to_sbp2_pointer(agent->orb_pointer, ptr);
 		return RCODE_COMPLETE;
-	} else
+	} else {
 		return RCODE_TYPE_ERROR;
+	}
 }
 
 static int tgt_agent_rw_doorbell(struct fw_card *card,
@@ -112,8 +116,9 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 
 		smp_wmb();
 		if (atomic_cmpxchg(&agent->state,
-			AGENT_STATE_SUSPENDED, AGENT_STATE_ACTIVE) !=
-			AGENT_STATE_SUSPENDED)
+					AGENT_STATE_SUSPENDED,
+					AGENT_STATE_ACTIVE)
+				!= AGENT_STATE_SUSPENDED)
 			return RCODE_CONFLICT_ERROR;
 		smp_wmb();
 
@@ -124,10 +129,11 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 			return RCODE_CONFLICT_ERROR;
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_QUADLET_REQUEST)
+	} else if (tcode == TCODE_READ_QUADLET_REQUEST) {
 		return RCODE_COMPLETE;
-	else
+	} else {
 		return RCODE_TYPE_ERROR;
+	}
 }
 
 static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
@@ -138,10 +144,11 @@ static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
 		pr_debug("tgt_agent UNSOLICITED_STATUS_ENABLE\n");
 		atomic_set(&agent->login->unsolicited_status_enable, 1);
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_QUADLET_REQUEST)
+	} else if (tcode == TCODE_READ_QUADLET_REQUEST) {
 		return RCODE_COMPLETE;
-	else
+	} else {
 		return RCODE_TYPE_ERROR;
+	}
 }
 
 static void tgt_agent_rw(struct fw_card *card,
@@ -262,21 +269,22 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	req->agent = agent;
 	req->orb_pointer = agent->orb_pointer;
 
-	pr_debug("tgt_orb ptr:0x%llx next_orb:0x%llx data_descriptor:0x%llx "
-		"misc:0x%x\n", req->orb_pointer,
-		sbp2_pointer_to_addr(&req->orb.next_orb),
-		sbp2_pointer_to_addr(&req->orb.data_descriptor),
-		be32_to_cpu(req->orb.misc));
+	pr_debug("tgt_orb ptr:0x%llx next_orb:0x%llx data_descriptor:0x%llx misc:0x%x\n",
+			req->orb_pointer,
+			sbp2_pointer_to_addr(&req->orb.next_orb),
+			sbp2_pointer_to_addr(&req->orb.data_descriptor),
+			be32_to_cpu(req->orb.misc));
 
-	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000)
+	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000) {
 		req->status.status = cpu_to_be32(
-			STATUS_BLOCK_SRC(STATUS_SRC_ORB_FINISHED));
-	else
+				STATUS_BLOCK_SRC(STATUS_SRC_ORB_FINISHED));
+	} else {
 		req->status.status = cpu_to_be32(
-			STATUS_BLOCK_SRC(STATUS_SRC_ORB_CONTINUING));
+				STATUS_BLOCK_SRC(STATUS_SRC_ORB_CONTINUING));
+	}
 
 	req->status.status |= cpu_to_be32(
-		STATUS_BLOCK_ORB_OFFSET_HIGH(agent->orb_pointer >> 32));
+			STATUS_BLOCK_ORB_OFFSET_HIGH(agent->orb_pointer >> 32));
 	req->status.orb_low = cpu_to_be32(agent->orb_pointer & 0xfffffffc);
 	INIT_WORK(&req->work, tgt_agent_process_work);
 

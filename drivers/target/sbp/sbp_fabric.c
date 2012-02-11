@@ -173,9 +173,10 @@ int sbp_write_pending(struct se_cmd *se_cmd)
 		return -EINVAL;
 	}
 
-	if (req->data_len != se_cmd->data_length)
+	if (req->data_len != se_cmd->data_length) {
 		pr_warn("sbp_write_pending: dodgy data length (%d != %d)\n",
 			req->data_len, se_cmd->data_length);
+	}
 
 	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 	if (!req->data_buf)
@@ -197,6 +198,7 @@ int sbp_write_pending(struct se_cmd *se_cmd)
 			se_cmd->t_data_nents,
 			req->data_buf,
 			se_cmd->data_length);
+
 	transport_generic_process_write(se_cmd);
 
 	return 0;
@@ -248,9 +250,10 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 		return -EINVAL;
 	}
 
-	if (req->data_len != se_cmd->data_length)
+	if (req->data_len != se_cmd->data_length) {
 		pr_warn("sbp_write_pending: dodgy data length (%d != %d)\n",
 			req->data_len, se_cmd->data_length);
+	}
 
 	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 	if (!req->data_buf)

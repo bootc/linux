@@ -49,16 +49,16 @@ static int read_peer_guid(u64 *guid, const struct sbp_management_request *req)
 	__be32 high, low;
 
 	ret = fw_run_transaction(req->card, TCODE_READ_QUADLET_REQUEST,
-		req->node_addr, req->generation, req->speed,
-		(CSR_REGISTER_BASE | CSR_CONFIG_ROM) + 3 * 4,
-		&high, sizeof(high));
+			req->node_addr, req->generation, req->speed,
+			(CSR_REGISTER_BASE | CSR_CONFIG_ROM) + 3 * 4,
+			&high, sizeof(high));
 	if (ret != RCODE_COMPLETE)
 		return ret;
 
 	ret = fw_run_transaction(req->card, TCODE_READ_QUADLET_REQUEST,
-		req->node_addr, req->generation, req->speed,
-		(CSR_REGISTER_BASE | CSR_CONFIG_ROM) + 4 * 4,
-		&low, sizeof(low));
+			req->node_addr, req->generation, req->speed,
+			(CSR_REGISTER_BASE | CSR_CONFIG_ROM) + 4 * 4,
+			&low, sizeof(low));
 	if (ret != RCODE_COMPLETE)
 		return ret;
 
@@ -601,8 +601,7 @@ static void session_reconnect_expired(struct sbp_session *sess)
 {
 	struct sbp_login_descriptor *login, *temp;
 
-	pr_info("Reconnect timer expired for node: %016llx\n",
-		sess->guid);
+	pr_info("Reconnect timer expired for node: %016llx\n", sess->guid);
 
 	list_for_each_entry_safe(login, temp, &sess->login_list, link) {
 		sbp_login_release(login, false);

@@ -67,8 +67,8 @@ static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
 
 		/* FIXME: retry failed data transfers */
 		ret = fw_run_transaction(sess->card, tcode,
-			sess->node_id, sess->generation, speed,
-			offset + seg_off, payload + seg_off, seg_len);
+				sess->node_id, sess->generation, speed,
+				offset + seg_off, payload + seg_off, seg_len);
 		if (ret != RCODE_COMPLETE) {
 			pr_debug("sbp_run_transaction: txn failed: %x\n", ret);
 			return -EIO;
@@ -153,10 +153,11 @@ static void sbp_calc_data_length_direction(struct sbp_target_request *req)
 		req->data_len = 0;
 		for (idx = 0; idx < data_size; idx++) {
 			req->data_len += be16_to_cpu(
-				req->pg_tbl[idx].segment_length);
+					req->pg_tbl[idx].segment_length);
 		}
-	} else
+	} else {
 		req->data_len = data_size;
+	}
 }
 
 void sbp_handle_command(struct sbp_target_request *req)
@@ -236,12 +237,13 @@ int sbp_rw_data(struct sbp_target_request *req)
 
 			offset += pte_len;
 		}
-	} else
+	} else {
 		ret = sbp_run_transaction(req,
 			(req->data_dir == DMA_TO_DEVICE) ?
 			TCODE_READ_BLOCK_REQUEST : TCODE_WRITE_BLOCK_REQUEST,
 			sbp2_pointer_to_addr(&req->orb.data_descriptor),
 			req->data_buf, req->data_len);
+	}
 
 	return ret;
 }
@@ -314,7 +316,8 @@ static void sbp_sense_mangle(struct sbp_target_request *req)
 	status[10] = sense[10];
 	status[11] = sense[11];
 
-	status[12] = sense[14];			/* fru */
+	/* fru */
+	status[12] = sense[14];
 
 	/* sense_key-dependent */
 	status[13] = sense[15];
@@ -332,9 +335,9 @@ int sbp_send_sense(struct sbp_target_request *req)
 {
 	struct se_cmd *se_cmd = &req->se_cmd;
 
-	if (se_cmd->scsi_sense_length)
+	if (se_cmd->scsi_sense_length) {
 		sbp_sense_mangle(req);
-	else {
+	} else {
 		req->status.status |= cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
 			STATUS_BLOCK_DEAD(0) |
