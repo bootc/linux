@@ -1,6 +1,6 @@
 
 struct sbp_management_agent {
-	struct sbp_tpg *tpg;
+	struct sbp_tport *tport;
 	struct fw_address_handler handler;
 	atomic_t state;
 	struct work_struct work;
@@ -17,6 +17,7 @@ struct sbp_management_request {
 	int speed;
 };
 
-struct sbp_management_agent *sbp_management_agent_register(struct sbp_tpg *tpg);
+struct sbp_management_agent *sbp_management_agent_register(
+		struct sbp_tport *tport);
 void sbp_management_agent_unregister(struct sbp_management_agent *agent);
 

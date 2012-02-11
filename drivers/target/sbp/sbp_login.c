@@ -238,7 +238,8 @@ void sbp_management_request_login(
 	struct sbp_management_agent *agent, struct sbp_management_request *req,
 	int *status_data_size)
 {
-	struct sbp_tpg *tpg = agent->tpg;
+	struct sbp_tport *tport = agent->tport;
+	struct sbp_tpg *tpg = tport->tpg;
 	struct se_lun *lun;
 	int ret;
 	u64 guid;
@@ -329,7 +330,7 @@ void sbp_management_request_login(
 	 * reject with resources_unavailable if we have
 	 */
 	if (sbp_login_count_all_by_lun(tpg, lun, 0) >=
-		tpg->max_logins_per_lun) {
+			tport->max_logins_per_lun) {
 		pr_warn("max number of logins reached\n");
 
 		req->status.status = cpu_to_be32(
@@ -369,7 +370,7 @@ void sbp_management_request_login(
 	/* only take the latest reconnect_hold into account */
 	sess->reconnect_hold = min(
 		1 << LOGIN_ORB_RECONNECT(be32_to_cpu(req->orb.misc)),
-		tpg->max_reconnect_timeout) - 1;
+		tport->max_reconnect_timeout) - 1;
 
 	/* create new login descriptor */
 	login = kmalloc(sizeof(*login), GFP_KERNEL);
@@ -471,7 +472,8 @@ void sbp_management_request_reconnect(
 	struct sbp_management_agent *agent, struct sbp_management_request *req,
 	int *status_data_size)
 {
-	struct sbp_tpg *tpg = agent->tpg;
+	struct sbp_tport *tport = agent->tport;
+	struct sbp_tpg *tpg = tport->tpg;
 	int ret;
 	u64 guid;
 	struct sbp_login_descriptor *login;
@@ -529,7 +531,8 @@ void sbp_management_request_logout(
 	struct sbp_management_agent *agent, struct sbp_management_request *req,
 	int *status_data_size)
 {
-	struct sbp_tpg *tpg = agent->tpg;
+	struct sbp_tport *tport = agent->tport;
+	struct sbp_tpg *tpg = tport->tpg;
 	int login_id;
 	struct sbp_login_descriptor *login;
 

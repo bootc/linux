@@ -158,19 +158,6 @@ struct sbp_lun {
 };
 
 struct sbp_tpg {
-	/* FireWire unit directory */
-	struct fw_descriptor unit_directory;
-	u32 *unit_directory_data;
-
-	/* SBP Management Agent */
-	struct sbp_management_agent *mgt_agt;
-
-	/* Parameters */
-	int enable;
-	int mgt_orb_timeout;
-	int max_reconnect_timeout;
-	int max_logins_per_lun;
-
 	/* Target portal group tag for TCM */
 	u16 tport_tpgt;
 	/* Pointer back to sbp_tport */
@@ -188,6 +175,21 @@ struct sbp_tport {
 	char tport_name[SBP_NAMELEN];
 	/* Returned by sbp_make_tport() */
 	struct se_wwn tport_wwn;
+
+	struct sbp_tpg *tpg;
+
+	/* FireWire unit directory */
+	struct fw_descriptor unit_directory;
+
+	/* SBP Management Agent */
+	struct sbp_management_agent *mgt_agt;
+
+	/* Parameters */
+	int enable;
+	s32 directory_id;
+	int mgt_orb_timeout;
+	int max_reconnect_timeout;
+	int max_logins_per_lun;
 };
 
 extern struct target_fabric_configfs *sbp_fabric_configfs;

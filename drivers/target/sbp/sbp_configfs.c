@@ -59,23 +59,24 @@ static const u32 sbp_unit_directory_template[] = {
 	0x3c000001, /* firmware_revision: 1 */
 };
 
-static int sbp_update_unit_directory(struct sbp_tpg *tpg)
+static int sbp_update_unit_directory(struct sbp_tport *tport)
 {
 	struct sbp_lun *lun;
 	int num_luns = 0, num_entries, idx = 0, mgt_agt_addr, ret;
+	u32 *data;
 
 	/* unregister existing descriptor */
-	if (tpg->unit_directory_data) {
-		fw_core_remove_descriptor(&tpg->unit_directory);
-		kfree(tpg->unit_directory_data);
-		tpg->unit_directory_data = NULL;
+	if (tport->unit_directory.data) {
+		fw_core_remove_descriptor(&tport->unit_directory);
+		kfree(tport->unit_directory.data);
+		tport->unit_directory.data = NULL;
 	}
 
-	if (!tpg->enable)
+	if (!tport->enable || !tport->tpg)
 		return 0;
 
 	/* count how many LUNs to publish */
-	list_for_each_entry(lun, &tpg->lun_list, link)
+	list_for_each_entry(lun, &tport->tpg->lun_list, link)
 		num_luns++;
 
 	/*
@@ -87,66 +88,70 @@ static int sbp_update_unit_directory(struct sbp_tpg *tpg)
 	 *  - unit unique ID
 	 *  - one for each LUN
 	 *
-	 *  MUST NOT include leaf or directory entries
+	 *  MUST NOT include leaf or sub-directory entries
 	 */
 	num_entries = ARRAY_SIZE(sbp_unit_directory_template) + 4 + num_luns;
 
+	if (tport->directory_id != -1)
+		num_entries++;
+
 	/* allocate num_entries + 4 for the header and unique ID leaf */
-	tpg->unit_directory_data =
-		kmalloc((num_entries + 4) * sizeof(u32), GFP_KERNEL);
-	if (!tpg->unit_directory_data)
+	data = kcalloc((num_entries + 4), sizeof(u32), GFP_KERNEL);
+	if (!data)
 		return -ENOMEM;
 
 	/* directory_length */
-	tpg->unit_directory_data[idx++] = num_entries << 16;
+	data[idx++] = num_entries << 16;
+
+	/* directory_id */
+	if (tport->directory_id != -1)
+		data[idx++] = (CSR_DIRECTORY_ID << 24) | tport->directory_id;
 
 	/* directory template */
-	memcpy(&tpg->unit_directory_data[idx], sbp_unit_directory_template,
-		sizeof(sbp_unit_directory_template));
+	memcpy(&data[idx], sbp_unit_directory_template,
+			sizeof(sbp_unit_directory_template));
 	idx += ARRAY_SIZE(sbp_unit_directory_template);
 
 	/* management_agent */
-	mgt_agt_addr = (tpg->mgt_agt->handler.offset - CSR_REGISTER_BASE) / 4;
-	tpg->unit_directory_data[idx++] = 0x54000000 |
-		(mgt_agt_addr & 0x00ffffff);
+	mgt_agt_addr = (tport->mgt_agt->handler.offset - CSR_REGISTER_BASE) / 4;
+	data[idx++] = 0x54000000 | (mgt_agt_addr & 0x00ffffff);
 
 	/* unit_characteristics */
-	tpg->unit_directory_data[idx++] = 0x3a000000 |
-		(((tpg->mgt_orb_timeout * 2) << 8) & 0xff00) |
+	data[idx++] = 0x3a000000 |
+		(((tport->mgt_orb_timeout * 2) << 8) & 0xff00) |
 		SBP_ORB_FETCH_SIZE;
 
 	/* reconnect_timeout */
-	tpg->unit_directory_data[idx++] = 0x3d000000 |
-		(tpg->max_reconnect_timeout & 0xffff);
+	data[idx++] = 0x3d000000 | (tport->max_reconnect_timeout & 0xffff);
 
 	/* unit unique ID (leaf is just after LUNs) */
-	tpg->unit_directory_data[idx++] = 0x8d000000 | (num_luns + 1);
+	data[idx++] = 0x8d000000 | (num_luns + 1);
 
 	/* LUNs */
-	list_for_each_entry(lun, &tpg->lun_list, link) {
+	list_for_each_entry(lun, &tport->tpg->lun_list, link) {
 		struct se_lun *se_lun = lun->se_lun;
 		struct se_device *dev = se_lun->lun_se_dev;
 		int type = dev->transport->get_device_type(dev);
 
 		/* logical_unit_number */
-		tpg->unit_directory_data[idx++] = 0x14000000 |
+		data[idx++] = 0x14000000 |
 			((type << 16) & 0x1f0000) |
 			(se_lun->unpacked_lun & 0xffff);
 	}
 
 	/* unit unique ID leaf */
-	tpg->unit_directory_data[idx++] = 2 << 16;
-	tpg->unit_directory_data[idx++] = (tpg->tport->guid >> 32) & 0xffffffff;
-	tpg->unit_directory_data[idx++] = tpg->tport->guid & 0xffffffff;
+	data[idx++] = 2 << 16;
+	data[idx++] = tport->guid >> 32;
+	data[idx++] = tport->guid;
 
-	tpg->unit_directory.length = idx;
-	tpg->unit_directory.key = (CSR_DIRECTORY | CSR_UNIT) << 24;
-	tpg->unit_directory.data = tpg->unit_directory_data;
+	tport->unit_directory.length = idx;
+	tport->unit_directory.key = (CSR_DIRECTORY | CSR_UNIT) << 24;
+	tport->unit_directory.data = data;
 
-	ret = fw_core_add_descriptor(&tpg->unit_directory);
+	ret = fw_core_add_descriptor(&tport->unit_directory);
 	if (ret < 0) {
-		kfree(tpg->unit_directory_data);
-		tpg->unit_directory_data = NULL;
+		kfree(tport->unit_directory.data);
+		tport->unit_directory.data = NULL;
 	}
 
 	return ret;
@@ -256,7 +261,7 @@ static int sbp_post_link_lun(
 	lun->se_lun = se_lun;
 	list_add_tail(&lun->link, &tpg->lun_list);
 
-	return sbp_update_unit_directory(tpg);
+	return sbp_update_unit_directory(tpg->tport);
 }
 
 static void sbp_pre_unlink_lun(
@@ -264,12 +269,13 @@ static void sbp_pre_unlink_lun(
 		struct se_lun *se_lun)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	struct sbp_lun *lun, *next;
+	struct sbp_tport *tport = tpg->tport;
+	struct sbp_lun *lun;
 	int ret;
 
 	pr_info("sbp_pre_unlink_lun: LUN %d\n", se_lun->unpacked_lun);
 
-	list_for_each_entry_safe(lun, next, &tpg->lun_list, link) {
+	list_for_each_entry(lun, &tpg->lun_list, link) {
 		if (lun->se_lun == se_lun)
 			break;
 	}
@@ -279,7 +285,10 @@ static void sbp_pre_unlink_lun(
 	list_del(&lun->link);
 	kfree(lun);
 
-	ret = sbp_update_unit_directory(tpg);
+	if (list_empty(&tpg->lun_list))
+		tport->enable = 0;
+
+	ret = sbp_update_unit_directory(tport);
 	if (ret < 0)
 		pr_err("unlink LUN: failed to update unit directory\n");
 }
@@ -296,15 +305,14 @@ static struct se_portal_group *sbp_make_tpg(
 	unsigned long tpgt;
 	int ret;
 
-	pr_info("sbp_make_tpg: %s\n", name);
-
 	if (strstr(name, "tpgt_") != name)
 		return ERR_PTR(-EINVAL);
 	if (kstrtoul(name + 5, 10, &tpgt) || tpgt > UINT_MAX)
 		return ERR_PTR(-EINVAL);
-	if (tpgt != 0) {
+
+	if (tport->tpg) {
 		pr_err("Only one TPG per Unit is possible.\n");
-		return ERR_PTR(-EINVAL);
+		return ERR_PTR(-EBUSY);
 	}
 
 	tpg = kzalloc(sizeof(*tpg), GFP_KERNEL);
@@ -315,18 +323,20 @@ static struct se_portal_group *sbp_make_tpg(
 
 	tpg->tport = tport;
 	tpg->tport_tpgt = tpgt;
+	tport->tpg = tpg;
 
 	/* default attribute values */
-	tpg->enable = 0;
-	tpg->mgt_orb_timeout = 15;
-	tpg->max_reconnect_timeout = 5;
-	tpg->max_logins_per_lun = 1;
+	tport->enable = 0;
+	tport->directory_id = -1;
+	tport->mgt_orb_timeout = 15;
+	tport->max_reconnect_timeout = 5;
+	tport->max_logins_per_lun = 1;
 
 	INIT_LIST_HEAD(&tpg->lun_list);
 
-	tpg->mgt_agt = sbp_management_agent_register(tpg);
-	if (IS_ERR(tpg->mgt_agt)) {
-		ret = PTR_ERR(tpg->mgt_agt);
+	tport->mgt_agt = sbp_management_agent_register(tport);
+	if (IS_ERR(tport->mgt_agt)) {
+		ret = PTR_ERR(tport->mgt_agt);
 		kfree(tpg);
 		return ERR_PTR(ret);
 	}
@@ -335,7 +345,7 @@ static struct se_portal_group *sbp_make_tpg(
 			&tpg->se_tpg, (void *)tpg,
 			TRANSPORT_TPG_TYPE_NORMAL);
 	if (ret < 0) {
-		sbp_management_agent_unregister(tpg->mgt_agt);
+		sbp_management_agent_unregister(tport->mgt_agt);
 		kfree(tpg);
 		return ERR_PTR(ret);
 	}
@@ -346,9 +356,11 @@ static struct se_portal_group *sbp_make_tpg(
 static void sbp_drop_tpg(struct se_portal_group *se_tpg)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
 
 	core_tpg_deregister(se_tpg);
-	sbp_management_agent_unregister(tpg->mgt_agt);
+	sbp_management_agent_unregister(tport->mgt_agt);
+	tport->tpg = NULL;
 	kfree(tpg);
 }
 
@@ -400,12 +412,54 @@ static struct configfs_attribute *sbp_wwn_attrs[] = {
 };
 
 
+static ssize_t sbp_tpg_show_directory_id(
+		struct se_portal_group *se_tpg,
+		char *page)
+{
+	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
+
+	if (tport->directory_id == -1)
+		return sprintf(page, "implicit\n");
+	else
+		return sprintf(page, "%06x\n", tport->directory_id);
+}
+
+static ssize_t sbp_tpg_store_directory_id(
+		struct se_portal_group *se_tpg,
+		const char *page,
+		size_t count)
+{
+	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
+	unsigned long val;
+
+	if (tport->enable) {
+		pr_err("Cannot change the directory_id on an active target.\n");
+		return -EBUSY;
+	}
+
+	if (strstr(page, "implicit") == page) {
+		tport->directory_id = -1;
+	} else {
+		if (kstrtoul(page, 16, &val) < 0)
+			return -EINVAL;
+		if (val > 0xffffff)
+			return -EINVAL;
+
+		tport->directory_id = val;
+	}
+
+	return count;
+}
+
 static ssize_t sbp_tpg_show_enable(
 		struct se_portal_group *se_tpg,
 		char *page)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	return sprintf(page, "%d\n", tpg->enable);
+	struct sbp_tport *tport = tpg->tport;
+	return sprintf(page, "%d\n", tport->enable);
 }
 
 static ssize_t sbp_tpg_store_enable(
@@ -414,6 +468,7 @@ static ssize_t sbp_tpg_store_enable(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
 	unsigned long val;
 	int ret;
 
@@ -422,7 +477,7 @@ static ssize_t sbp_tpg_store_enable(
 	if ((val != 0) && (val != 1))
 		return -EINVAL;
 
-	if (tpg->enable == val)
+	if (tport->enable == val)
 		return count;
 
 	if (val) {
@@ -436,9 +491,9 @@ static ssize_t sbp_tpg_store_enable(
 			return -EBUSY;
 	}
 
-	tpg->enable = val;
+	tport->enable = val;
 
-	ret = sbp_update_unit_directory(tpg);
+	ret = sbp_update_unit_directory(tport);
 	if (ret < 0) {
 		pr_err("Could not update Config ROM\n");
 		return ret;
@@ -447,9 +502,11 @@ static ssize_t sbp_tpg_store_enable(
 	return count;
 }
 
+TF_TPG_BASE_ATTR(sbp, directory_id, S_IRUGO | S_IWUSR);
 TF_TPG_BASE_ATTR(sbp, enable, S_IRUGO | S_IWUSR);
 
 static struct configfs_attribute *sbp_tpg_base_attrs[] = {
+	&sbp_tpg_directory_id.attr,
 	&sbp_tpg_enable.attr,
 	NULL,
 };
@@ -459,7 +516,8 @@ static ssize_t sbp_tpg_attrib_show_mgt_orb_timeout(
 		char *page)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	return sprintf(page, "%d\n", tpg->mgt_orb_timeout);
+	struct sbp_tport *tport = tpg->tport;
+	return sprintf(page, "%d\n", tport->mgt_orb_timeout);
 }
 
 static ssize_t sbp_tpg_attrib_store_mgt_orb_timeout(
@@ -468,6 +526,7 @@ static ssize_t sbp_tpg_attrib_store_mgt_orb_timeout(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
 	unsigned long val;
 	int ret;
 
@@ -476,12 +535,12 @@ static ssize_t sbp_tpg_attrib_store_mgt_orb_timeout(
 	if ((val < 1) || (val > 127))
 		return -EINVAL;
 
-	if (tpg->mgt_orb_timeout == val)
+	if (tport->mgt_orb_timeout == val)
 		return count;
 
-	tpg->mgt_orb_timeout = val;
+	tport->mgt_orb_timeout = val;
 
-	ret = sbp_update_unit_directory(tpg);
+	ret = sbp_update_unit_directory(tport);
 	if (ret < 0)
 		return ret;
 
@@ -493,7 +552,8 @@ static ssize_t sbp_tpg_attrib_show_max_reconnect_timeout(
 		char *page)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	return sprintf(page, "%d\n", tpg->max_reconnect_timeout);
+	struct sbp_tport *tport = tpg->tport;
+	return sprintf(page, "%d\n", tport->max_reconnect_timeout);
 }
 
 static ssize_t sbp_tpg_attrib_store_max_reconnect_timeout(
@@ -502,6 +562,7 @@ static ssize_t sbp_tpg_attrib_store_max_reconnect_timeout(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
 	unsigned long val;
 	int ret;
 
@@ -510,12 +571,12 @@ static ssize_t sbp_tpg_attrib_store_max_reconnect_timeout(
 	if ((val < 1) || (val > 32767))
 		return -EINVAL;
 
-	if (tpg->max_reconnect_timeout == val)
+	if (tport->max_reconnect_timeout == val)
 		return count;
 
-	tpg->max_reconnect_timeout = val;
+	tport->max_reconnect_timeout = val;
 
-	ret = sbp_update_unit_directory(tpg);
+	ret = sbp_update_unit_directory(tport);
 	if (ret < 0)
 		return ret;
 
@@ -527,7 +588,8 @@ static ssize_t sbp_tpg_attrib_show_max_logins_per_lun(
 		char *page)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	return sprintf(page, "%d\n", tpg->max_logins_per_lun);
+	struct sbp_tport *tport = tpg->tport;
+	return sprintf(page, "%d\n", tport->max_logins_per_lun);
 }
 
 static ssize_t sbp_tpg_attrib_store_max_logins_per_lun(
@@ -536,6 +598,7 @@ static ssize_t sbp_tpg_attrib_store_max_logins_per_lun(
 		size_t count)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
+	struct sbp_tport *tport = tpg->tport;
 	unsigned long val;
 
 	if (kstrtoul(page, 0, &val) < 0)
@@ -545,7 +608,7 @@ static ssize_t sbp_tpg_attrib_store_max_logins_per_lun(
 
 	/* XXX: also check against current count? */
 
-	tpg->max_logins_per_lun = val;
+	tport->max_logins_per_lun = val;
 
 	return count;
 }

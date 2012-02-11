@@ -170,7 +170,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 	struct sbp_management_agent *agent = callback_data;
 	struct sbp2_pointer *ptr = data;
 
-	if (!agent->tpg->enable) {
+	if (!agent->tport->enable) {
 		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
 		return;
 	}
@@ -226,7 +226,8 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 	}
 }
 
-struct sbp_management_agent *sbp_management_agent_register(struct sbp_tpg *tpg)
+struct sbp_management_agent *sbp_management_agent_register(
+		struct sbp_tport *tport)
 {
 	int ret;
 	struct sbp_management_agent *agent;
@@ -235,7 +236,7 @@ struct sbp_management_agent *sbp_management_agent_register(struct sbp_tpg *tpg)
 	if (!agent)
 		return ERR_PTR(-ENOMEM);
 
-	agent->tpg = tpg;
+	agent->tport = tport;
 	agent->handler.length = 0x08;
 	agent->handler.address_callback = sbp_mgt_agent_rw;
 	agent->handler.callback_data = agent;
