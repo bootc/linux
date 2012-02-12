@@ -362,7 +362,7 @@ void sbp_management_request_login(
 		sess->generation = req->generation;
 		sess->speed = req->speed;
 
-		queue_delayed_work(fw_workqueue, &sess->maint_work,
+		queue_delayed_work(sbp_workqueue, &sess->maint_work,
 			SESSION_MAINTENANCE_INTERVAL);
 	}
 
@@ -612,11 +612,11 @@ static void session_maintenance_work(struct work_struct *work)
 		/* check for bus reset and make node_id invalid */
 		session_check_for_reset(sess);
 
-		queue_delayed_work(fw_workqueue, &sess->maint_work,
+		queue_delayed_work(sbp_workqueue, &sess->maint_work,
 			SESSION_MAINTENANCE_INTERVAL);
 	} else if (!time_after64(get_jiffies_64(), sess->reconnect_expires)) {
 		/* still waiting for reconnect */
-		queue_delayed_work(fw_workqueue, &sess->maint_work,
+		queue_delayed_work(sbp_workqueue, &sess->maint_work,
 			SESSION_MAINTENANCE_INTERVAL);
 	} else {
 		/* reconnect timeout has expired */

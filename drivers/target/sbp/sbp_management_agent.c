@@ -205,7 +205,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
 
-		ret = queue_work(fw_workqueue, &agent->work);
+		ret = queue_work(sbp_workqueue, &agent->work);
 		if (!ret) {
 			/* pretend we're busy */
 			kfree(req);

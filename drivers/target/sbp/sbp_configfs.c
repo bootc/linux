@@ -49,6 +49,8 @@
 /* Local pointer to allocated TCM configfs fabric module */
 struct target_fabric_configfs *sbp_fabric_configfs;
 
+struct workqueue_struct *sbp_workqueue;
+
 /* FireWire address region for management and command block address handlers */
 const struct fw_address_region sbp_register_region = {
 	.start = CSR_REGISTER_BASE + 0x10000,
@@ -698,6 +700,12 @@ static int sbp_register_configfs(void)
 		return ret;
 	}
 
+	sbp_workqueue = alloc_workqueue("firewire-sbp-target", WQ_UNBOUND, 0);
+	if (!sbp_workqueue) {
+		target_fabric_configfs_deregister(fabric);
+		return -ENOMEM;
+	}
+
 	sbp_fabric_configfs = fabric;
 
 	return 0;
@@ -709,6 +717,7 @@ static void sbp_deregister_configfs(void)
 		return;
 
 	target_fabric_configfs_deregister(sbp_fabric_configfs);
+	destroy_workqueue(sbp_workqueue);
 	sbp_fabric_configfs = NULL;
 };
 

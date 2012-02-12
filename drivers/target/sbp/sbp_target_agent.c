@@ -97,7 +97,7 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 		pr_debug("tgt_agent ORB_POINTER write: %llu\n",
 			agent->orb_pointer);
 
-		ret = queue_work(fw_workqueue, &agent->work);
+		ret = queue_work(sbp_workqueue, &agent->work);
 		if (!ret)
 			return RCODE_CONFLICT_ERROR;
 
@@ -131,7 +131,7 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 
 		pr_debug("tgt_agent DOORBELL\n");
 
-		ret = queue_work(fw_workqueue, &agent->work);
+		ret = queue_work(sbp_workqueue, &agent->work);
 		if (!ret)
 			return RCODE_CONFLICT_ERROR;
 
@@ -299,7 +299,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	req->status.orb_low = cpu_to_be32(agent->orb_pointer & 0xfffffffc);
 	INIT_WORK(&req->work, tgt_agent_process_work);
 
-	ret = queue_work(fw_workqueue, &req->work);
+	ret = queue_work(sbp_workqueue, &req->work);
 	if (!ret) {
 		pr_err("tgt_orb queue_work failed\n");
 		sbp_free_request(req);
@@ -318,7 +318,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 
 	agent->orb_pointer = sbp2_pointer_to_addr(&req->orb.next_orb);
 
-	if (!queue_work(fw_workqueue, &agent->work)) {
+	if (!queue_work(sbp_workqueue, &agent->work)) {
 		pr_err("tgt_orb fetch queue_work failed\n");
 		goto out;
 	}
