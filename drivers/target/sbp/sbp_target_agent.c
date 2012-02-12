@@ -37,19 +37,22 @@ static int tgt_agent_rw_agent_state(struct fw_card *card,
 	int tcode, int generation, void *data,
 	struct sbp_target_agent *agent)
 {
-	if (tcode == TCODE_READ_QUADLET_REQUEST) {
-		__be32 state;
+	__be32 state;
 
+	switch (tcode) {
+	case TCODE_READ_QUADLET_REQUEST:
 		pr_debug("tgt_agent AGENT_STATE READ\n");
 
 		state = cpu_to_be32(atomic_read(&agent->state));
 		memcpy(data, &state, sizeof(state));
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+	
+	case TCODE_WRITE_QUADLET_REQUEST:
 		/* ignored */
 		return RCODE_COMPLETE;
-	} else {
+
+	default:
 		return RCODE_TYPE_ERROR;
 	}
 }
@@ -58,11 +61,13 @@ static int tgt_agent_rw_agent_reset(struct fw_card *card,
 	int tcode, int generation, void *data,
 	struct sbp_target_agent *agent)
 {
-	if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+	switch (tcode) {
+	case TCODE_WRITE_QUADLET_REQUEST:
 		pr_debug("tgt_agent AGENT_RESET\n");
 		atomic_set(&agent->state, AGENT_STATE_RESET);
 		return RCODE_COMPLETE;
-	} else {
+
+	default:
 		return RCODE_TYPE_ERROR;
 	}
 }
@@ -72,10 +77,10 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 	struct sbp_target_agent *agent)
 {
 	struct sbp2_pointer *ptr = data;
+	int ret;
 
-	if (tcode == TCODE_WRITE_BLOCK_REQUEST) {
-		int ret;
-
+	switch (tcode) {
+	case TCODE_WRITE_BLOCK_REQUEST:
 		smp_wmb();
 		atomic_cmpxchg(&agent->state,
 				AGENT_STATE_RESET, AGENT_STATE_SUSPENDED);
@@ -97,11 +102,13 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 			return RCODE_CONFLICT_ERROR;
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
+
+	case TCODE_READ_BLOCK_REQUEST:
 		pr_debug("tgt_agent ORB_POINTER READ\n");
 		addr_to_sbp2_pointer(agent->orb_pointer, ptr);
 		return RCODE_COMPLETE;
-	} else {
+
+	default:
 		return RCODE_TYPE_ERROR;
 	}
 }
@@ -110,9 +117,10 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 	int tcode, int generation, void *data,
 	struct sbp_target_agent *agent)
 {
-	if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-		int ret;
+	int ret;
 
+	switch (tcode) {
+	case TCODE_WRITE_QUADLET_REQUEST:
 		smp_wmb();
 		if (atomic_cmpxchg(&agent->state,
 					AGENT_STATE_SUSPENDED,
@@ -128,9 +136,11 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 			return RCODE_CONFLICT_ERROR;
 
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_QUADLET_REQUEST) {
+
+	case TCODE_READ_QUADLET_REQUEST:
 		return RCODE_COMPLETE;
-	} else {
+	
+	default:
 		return RCODE_TYPE_ERROR;
 	}
 }
@@ -139,13 +149,16 @@ static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
 	int tcode, int generation, void *data,
 	struct sbp_target_agent *agent)
 {
-	if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+	switch (tcode) {
+	case TCODE_WRITE_QUADLET_REQUEST:
 		pr_debug("tgt_agent UNSOLICITED_STATUS_ENABLE\n");
 		atomic_set(&agent->login->unsolicited_status_enable, 1);
 		return RCODE_COMPLETE;
-	} else if (tcode == TCODE_READ_QUADLET_REQUEST) {
+
+	case TCODE_READ_QUADLET_REQUEST:
 		return RCODE_COMPLETE;
-	} else {
+
+	default:
 		return RCODE_TYPE_ERROR;
 	}
 }
@@ -161,10 +174,9 @@ static void tgt_agent_rw(struct fw_card *card,
 	/* turn offset into the offset from the start of the block */
 	offset -= agent->handler.offset;
 
-	/* check the source matches the login */
 	if (source != agent->login->sess->node_id) {
 		pr_notice("ignoring request from foreign node (%x != %x)\n",
-			source, agent->login->sess->node_id);
+				source, agent->login->sess->node_id);
 		fw_send_response(card, request, RCODE_TYPE_ERROR);
 		return;
 	}
@@ -314,7 +326,6 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 	return;
 
 out:
-	/* finished */
 	atomic_cmpxchg(&agent->state,
 		AGENT_STATE_ACTIVE, AGENT_STATE_SUSPENDED);
 }

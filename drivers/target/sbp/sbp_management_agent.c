@@ -50,14 +50,12 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		goto out;
 	}
 
-	pr_debug("mgt_orb ptr1:0x%llx ptr2:0x%llx misc:0x%x len:0x%x "
-		"status_fifo:0x%llx\n",
+	pr_debug("mgt_orb ptr1:0x%llx ptr2:0x%llx misc:0x%x len:0x%x status_fifo:0x%llx\n",
 		sbp2_pointer_to_addr(&req->orb.ptr1),
 		sbp2_pointer_to_addr(&req->orb.ptr2),
 		be32_to_cpu(req->orb.misc), be32_to_cpu(req->orb.length),
 		sbp2_pointer_to_addr(&req->orb.status_fifo));
 
-	/* sanity check basic fields */
 	if (!ORB_NOTIFY(be32_to_cpu(req->orb.misc)) ||
 		ORB_REQUEST_FORMAT(be32_to_cpu(req->orb.misc)) != 0) {
 		pr_err("mgt_orb bad request\n");
@@ -138,7 +136,6 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 		break;
 	}
 
-	/* set up the status block we'll send to the initiator */
 	req->status.status |= cpu_to_be32(
 		STATUS_BLOCK_SRC(1) | /* Response to ORB, next_ORB absent */
 		STATUS_BLOCK_LEN(DIV_ROUND_UP(status_data_len, 4) + 1) |

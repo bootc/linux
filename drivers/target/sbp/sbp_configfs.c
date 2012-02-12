@@ -70,7 +70,6 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 	int num_luns = 0, num_entries, idx = 0, mgt_agt_addr, ret;
 	u32 *data;
 
-	/* unregister existing descriptor */
 	if (tport->unit_directory.data) {
 		fw_core_remove_descriptor(&tport->unit_directory);
 		kfree(tport->unit_directory.data);
@@ -80,7 +79,6 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 	if (!tport->enable || !tport->tpg)
 		return 0;
 
-	/* count how many LUNs to publish */
 	list_for_each_entry(lun, &tport->tpg->lun_list, link)
 		num_luns++;
 
@@ -112,7 +110,7 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 	if (tport->directory_id != -1)
 		data[idx++] = (CSR_DIRECTORY_ID << 24) | tport->directory_id;
 
-	/* directory template */
+	/* unit directory template */
 	memcpy(&data[idx], sbp_unit_directory_template,
 			sizeof(sbp_unit_directory_template));
 	idx += ARRAY_SIZE(sbp_unit_directory_template);
@@ -132,7 +130,6 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 	/* unit unique ID (leaf is just after LUNs) */
 	data[idx++] = 0x8d000000 | (num_luns + 1);
 
-	/* LUNs */
 	list_for_each_entry(lun, &tport->tpg->lun_list, link) {
 		struct se_lun *se_lun = lun->se_lun;
 		struct se_device *dev = se_lun->lun_se_dev;
@@ -211,8 +208,6 @@ static struct se_node_acl *sbp_make_nodeacl(
 	u64 guid = 0;
 	u32 nexus_depth = 1;
 
-	pr_info("sbp_make_nodeacl: %s\n", name);
-
 	if (sbp_parse_wwn(name, &guid, 1) < 0)
 		return ERR_PTR(-EINVAL);
 
@@ -231,9 +226,6 @@ static struct se_node_acl *sbp_make_nodeacl(
 		return se_nacl;
 	}
 
-	/*
-	 * Locate our struct sbp_nacl and set the FC Nport WWPN
-	 */
 	nacl = container_of(se_nacl, struct sbp_nacl, se_node_acl);
 	nacl->guid = guid;
 	sbp_format_wwn(nacl->iport_name, SBP_NAMELEN, guid);
@@ -257,8 +249,6 @@ static int sbp_post_link_lun(
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
 	struct sbp_lun *lun;
 
-	pr_info("sbp_post_link_lun: LUN %d\n", se_lun->unpacked_lun);
-
 	lun = kmalloc(sizeof(*lun), GFP_KERNEL);
 	if (!lun)
 		return -ENOMEM;
@@ -277,8 +267,6 @@ static void sbp_pre_unlink_lun(
 	struct sbp_tport *tport = tpg->tport;
 	struct sbp_lun *lun;
 	int ret;
-
-	pr_info("sbp_pre_unlink_lun: LUN %d\n", se_lun->unpacked_lun);
 
 	list_for_each_entry(lun, &tpg->lun_list, link) {
 		if (lun->se_lun == se_lun)
@@ -377,8 +365,6 @@ static struct se_wwn *sbp_make_tport(
 	struct sbp_tport *tport;
 	u64 guid = 0;
 
-	pr_info("sbp_make_tport: %s\n", name);
-
 	if (sbp_parse_wwn(name, &guid, 1) < 0)
 		return ERR_PTR(-EINVAL);
 
@@ -415,7 +401,6 @@ static struct configfs_attribute *sbp_wwn_attrs[] = {
 	&sbp_wwn_version.attr,
 	NULL,
 };
-
 
 static ssize_t sbp_tpg_show_directory_id(
 		struct se_portal_group *se_tpg,
@@ -491,7 +476,7 @@ static ssize_t sbp_tpg_store_enable(
 			return -EINVAL;
 		}
 	} else {
-		/* FIXME: force-shutdown sessions instead */
+		/* XXX: force-shutdown sessions instead? */
 		if (!list_empty(&se_tpg->tpg_sess_list))
 			return -EBUSY;
 	}
@@ -686,18 +671,12 @@ static int sbp_register_configfs(void)
 
 	pr_info("FireWire SBP fabric module %s\n", SBP_VERSION);
 
-	/*
-	 * Register the top level struct config_item_type with TCM core
-	 */
 	fabric = target_fabric_configfs_init(THIS_MODULE, "sbp");
 	if (!fabric) {
 		pr_err("target_fabric_configfs_init() failed\n");
 		return -ENOMEM;
 	}
 
-	/*
-	 * Setup fabric->tf_ops from our local sbp_ops
-	 */
 	fabric->tf_ops = sbp_ops;
 
 	/*
@@ -713,21 +692,14 @@ static int sbp_register_configfs(void)
 	TF_CIT_TMPL(fabric)->tfc_tpg_nacl_auth_cit.ct_attrs = NULL;
 	TF_CIT_TMPL(fabric)->tfc_tpg_nacl_param_cit.ct_attrs = NULL;
 
-	/*
-	 * Register the fabric for use within TCM
-	 */
 	ret = target_fabric_configfs_register(fabric);
 	if (ret < 0) {
 		pr_err("target_fabric_configfs_register() failed for SBP\n");
 		return ret;
 	}
 
-	/*
-	 * Setup our local pointer to *fabric
-	 */
 	sbp_fabric_configfs = fabric;
 
-	pr_info("SBP[0] - Set fabric -> sbp_fabric_configfs\n");
 	return 0;
 };
 
@@ -738,7 +710,6 @@ static void sbp_deregister_configfs(void)
 
 	target_fabric_configfs_deregister(sbp_fabric_configfs);
 	sbp_fabric_configfs = NULL;
-	pr_info("SBP[0] - Cleared sbp_fabric_configfs\n");
 };
 
 static int __init sbp_init(void)

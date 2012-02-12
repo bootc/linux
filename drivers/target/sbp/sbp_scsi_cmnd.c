@@ -98,7 +98,8 @@ static int sbp_fetch_command(struct sbp_target_request *req)
 
 		ret = sbp_run_transaction(req, TCODE_READ_BLOCK_REQUEST,
 			req->orb_pointer + sizeof(req->orb),
-			req->cmd_buf + sizeof(req->orb.command_block), cmd_len);
+			req->cmd_buf + sizeof(req->orb.command_block),
+			copy_len);
 		if (ret)
 			return ret;
 	}
@@ -210,9 +211,13 @@ void sbp_handle_command(struct sbp_target_request *req)
  */
 int sbp_rw_data(struct sbp_target_request *req)
 {
-	int ret;
+	int ret, tcode;
 
 	WARN_ON(!req->data_len);
+
+	tcode = (req->data_dir == DMA_TO_DEVICE) ?
+		TCODE_READ_BLOCK_REQUEST :
+		TCODE_WRITE_BLOCK_REQUEST;
 
 	if (req->pg_tbl) {
 		int idx, offset = 0, data_size;
@@ -220,28 +225,23 @@ int sbp_rw_data(struct sbp_target_request *req)
 		data_size = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
 
 		for (idx = 0; idx < data_size; idx++) {
-			int pte_len = be16_to_cpu(
-				req->pg_tbl[idx].segment_length);
-			u64 pte_offset = (u64)be16_to_cpu(
-				req->pg_tbl[idx].segment_base_hi) << 32 |
-				be32_to_cpu(req->pg_tbl[idx].segment_base_lo);
+			struct sbp_page_table_entry *pte = &req->pg_tbl[idx];
+			int pte_len = be16_to_cpu(pte->segment_length);
+			u64 pte_offset =
+				(u64)be16_to_cpu(pte->segment_base_hi) << 32 |
+				be32_to_cpu(pte->segment_base_lo);
 
-			ret = sbp_run_transaction(req,
-				(req->data_dir == DMA_TO_DEVICE) ?
-				TCODE_READ_BLOCK_REQUEST :
-				TCODE_WRITE_BLOCK_REQUEST,
-				pte_offset, req->data_buf + offset, pte_len);
+			ret = sbp_run_transaction(req, tcode, pte_offset,
+					req->data_buf + offset, pte_len);
 			if (ret)
 				break;
 
 			offset += pte_len;
 		}
 	} else {
-		ret = sbp_run_transaction(req,
-			(req->data_dir == DMA_TO_DEVICE) ?
-			TCODE_READ_BLOCK_REQUEST : TCODE_WRITE_BLOCK_REQUEST,
-			sbp2_pointer_to_addr(&req->orb.data_descriptor),
-			req->data_buf, req->data_len);
+		ret = sbp_run_transaction(req, tcode,
+				sbp2_pointer_to_addr(&req->orb.data_descriptor),
+				req->data_buf, req->data_len);
 	}
 
 	return ret;
@@ -252,11 +252,10 @@ int sbp_send_status(struct sbp_target_request *req)
 	int ret, length;
 	struct sbp_login_descriptor *login = req->agent->login;
 
-	/* calculate how much data to send */
 	length = (((be32_to_cpu(req->status.status) >> 24) & 0x07) + 1) * 4;
 
 	ret = sbp_run_transaction(req, TCODE_WRITE_BLOCK_REQUEST,
-		login->status_fifo_addr, &req->status, length);
+			login->status_fifo_addr, &req->status, length);
 	if (ret) {
 		pr_debug("sbp_send_status: write failed: %d\n", ret);
 		return ret;
@@ -273,13 +272,15 @@ static void sbp_sense_mangle(struct sbp_target_request *req)
 
 	WARN_ON(se_cmd->scsi_sense_length < 18);
 
-	switch (sense[0] & 0x7f) {
-	case 0x70:
-		status[0] = 0 << 6;		/* sfmt */
+	switch (sense[0] & 0x7f) { 		/* sfmt */
+	case 0x70: /* current, fixed */
+		status[0] = 0 << 6;
 		break;
-	case 0x71:
-		status[0] = 1 << 6;		/* sfmt */
+	case 0x71: /* deferred, fixed */
+		status[0] = 1 << 6;
 		break;
+	case 0x72: /* current, descriptor */
+	case 0x73: /* deferred, descriptor */
 	default:
 		/*
 		 * TODO: SBP-3 specifies what we should do with descriptor

@@ -239,7 +239,7 @@ void sbp_management_request_login(
 {
 	struct sbp_tport *tport = agent->tport;
 	struct sbp_tpg *tpg = tport->tpg;
-	struct se_lun *lun;
+	struct se_lun *se_lun;
 	int ret;
 	u64 guid;
 	struct sbp_session *sess;
@@ -247,10 +247,9 @@ void sbp_management_request_login(
 	struct sbp_login_response_block *response;
 	int login_response_len;
 
-	/* find the LUN we want to login to */
-	lun = sbp_get_lun_from_tpg(tpg,
+	se_lun = sbp_get_lun_from_tpg(tpg,
 			LOGIN_ORB_LUN(be32_to_cpu(req->orb.misc)));
-	if (IS_ERR(lun)) {
+	if (IS_ERR(se_lun)) {
 		pr_notice("login to unknown LUN: %d\n",
 			LOGIN_ORB_LUN(be32_to_cpu(req->orb.misc)));
 
@@ -260,7 +259,6 @@ void sbp_management_request_login(
 		return;
 	}
 
-	/* read the peer's GUID */
 	ret = read_peer_guid(&guid, req);
 	if (ret != RCODE_COMPLETE) {
 		pr_warn("failed to read peer GUID: %d\n", ret);
@@ -272,17 +270,15 @@ void sbp_management_request_login(
 	}
 
 	pr_notice("mgt_agent LOGIN to LUN %d from %016llx\n",
-		lun->unpacked_lun, guid);
-
-	/* locate an existing session if there is one */
-	sess = sbp_session_find_by_guid(tpg, guid);
+		se_lun->unpacked_lun, guid);
 
 	/*
 	 * check for any existing logins by comparing GUIDs
 	 * reject with access_denied if present
 	 */
+	sess = sbp_session_find_by_guid(tpg, guid);
 	if (sess) {
-		login = sbp_login_find_by_lun(sess, lun);
+		login = sbp_login_find_by_lun(sess, se_lun);
 		if (login) {
 			pr_notice("initiator already logged-in\n");
 
@@ -302,7 +298,7 @@ void sbp_management_request_login(
 	 * reject with access_denied if any logins present
 	 */
 	if (LOGIN_ORB_EXCLUSIVE(be32_to_cpu(req->orb.misc)) &&
-		sbp_login_count_all_by_lun(tpg, lun, 0)) {
+			sbp_login_count_all_by_lun(tpg, se_lun, 0)) {
 		pr_warn("refusing exclusive login with other active logins\n");
 
 		req->status.status = cpu_to_be32(
@@ -315,7 +311,7 @@ void sbp_management_request_login(
 	 * check exclusive bit in any existing login descriptor
 	 * reject with access_denied if any exclusive logins present
 	 */
-	if (sbp_login_count_all_by_lun(tpg, lun, 1)) {
+	if (sbp_login_count_all_by_lun(tpg, se_lun, 1)) {
 		pr_warn("refusing login while another exclusive login present\n");
 
 		req->status.status = cpu_to_be32(
@@ -328,7 +324,7 @@ void sbp_management_request_login(
 	 * check we haven't exceeded the number of allowed logins
 	 * reject with resources_unavailable if we have
 	 */
-	if (sbp_login_count_all_by_lun(tpg, lun, 0) >=
+	if (sbp_login_count_all_by_lun(tpg, se_lun, 0) >=
 			tport->max_logins_per_lun) {
 		pr_warn("max number of logins reached\n");
 
@@ -371,7 +367,6 @@ void sbp_management_request_login(
 		1 << LOGIN_ORB_RECONNECT(be32_to_cpu(req->orb.misc)),
 		tport->max_reconnect_timeout) - 1;
 
-	/* create new login descriptor */
 	login = kmalloc(sizeof(*login), GFP_KERNEL);
 	if (!login) {
 		pr_err("failed to allocate login descriptor\n");
@@ -385,13 +380,12 @@ void sbp_management_request_login(
 	}
 
 	login->sess = sess;
-	login->lun = lun;
+	login->lun = se_lun;
 	login->status_fifo_addr = sbp2_pointer_to_addr(&req->orb.status_fifo);
 	login->exclusive = LOGIN_ORB_EXCLUSIVE(be32_to_cpu(req->orb.misc));
 	login->login_id = atomic_inc_return(&login_id);
 	atomic_set(&login->unsolicited_status_enable, 0);
 
-	/* set up address handler */
 	login->tgt_agt = sbp_target_agent_register(login);
 	if (IS_ERR(login->tgt_agt)) {
 		ret = PTR_ERR(login->tgt_agt);
@@ -406,11 +400,9 @@ void sbp_management_request_login(
 		return;
 	}
 
-	/* add to logins list */
 	list_add_tail(&login->link, &sess->login_list);
 
 already_logged_in:
-	/* send login response */
 	response = kzalloc(sizeof(*response), GFP_KERNEL);
 	if (!response) {
 		pr_err("failed to allocate login response block\n");
@@ -423,8 +415,9 @@ already_logged_in:
 		return;
 	}
 
-	login_response_len = max(12, min((int)sizeof(response),
-		(int)LOGIN_ORB_RESPONSE_LENGTH(be32_to_cpu(req->orb.length))));
+	login_response_len = clamp_val(
+			LOGIN_ORB_RESPONSE_LENGTH(be32_to_cpu(req->orb.length)),
+			12, sizeof(*response));
 	response->misc = cpu_to_be32(
 		((login_response_len & 0xffff) << 16) |
 		(login->login_id & 0xffff));
@@ -477,7 +470,6 @@ void sbp_management_request_reconnect(
 	u64 guid;
 	struct sbp_login_descriptor *login;
 
-	/* read the peer's GUID */
 	ret = read_peer_guid(&guid, req);
 	if (ret != RCODE_COMPLETE) {
 		pr_warn("failed to read peer GUID: %d\n", ret);
@@ -490,7 +482,6 @@ void sbp_management_request_reconnect(
 
 	pr_notice("mgt_agent RECONNECT from %016llx\n", guid);
 
-	/* find the login */
 	login = sbp_login_find_by_id(tpg,
 		RECONNECT_ORB_LOGIN_ID(be32_to_cpu(req->orb.misc)));
 
@@ -537,7 +528,6 @@ void sbp_management_request_logout(
 
 	login_id = LOGOUT_ORB_LOGIN_ID(be32_to_cpu(req->orb.misc));
 
-	/* Find login by ID */
 	login = sbp_login_find_by_id(tpg, login_id);
 	if (!login) {
 		pr_warn("cannot find login: %d\n", login_id);
@@ -551,7 +541,6 @@ void sbp_management_request_logout(
 	pr_info("mgt_agent LOGOUT from LUN %d session %d\n",
 		login->lun->unpacked_lun, login->login_id);
 
-	/* Check source against login's node_id */
 	if (req->node_addr != login->sess->node_id) {
 		pr_warn("logout from different node ID\n");
 
@@ -561,10 +550,7 @@ void sbp_management_request_logout(
 		return;
 	}
 
-	/* Perform logout */
 	sbp_login_release(login, true);
-
-	pr_info("logout successful!\n");
 
 	req->status.status = cpu_to_be32(
 		STATUS_BLOCK_RESP(STATUS_RESP_REQUEST_COMPLETE) |
