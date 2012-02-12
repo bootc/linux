@@ -39,7 +39,6 @@ u8 sbp_get_fabric_proto_ident(struct se_portal_group *se_tpg)
 	 */
 	return SCSI_PROTOCOL_SBP;
 }
-EXPORT_SYMBOL(sbp_get_fabric_proto_ident);
 
 u32 sbp_get_pr_transport_id(
 	struct se_portal_group *se_tpg,
@@ -67,7 +66,6 @@ u32 sbp_get_pr_transport_id(
 	 */
 	return 24;
 }
-EXPORT_SYMBOL(sbp_get_pr_transport_id);
 
 u32 sbp_get_pr_transport_id_len(
 	struct se_portal_group *se_tpg,
@@ -84,7 +82,6 @@ u32 sbp_get_pr_transport_id_len(
 	 */
 	return 24;
 }
-EXPORT_SYMBOL(sbp_get_pr_transport_id_len);
 
 /*
  * Used for handling SCSI fabric dependent TransportIDs in SPC-3 and above
@@ -109,5 +106,4 @@ char *sbp_parse_pr_out_transport_id(
 
 	return (char *)&buf[8];
 }
-EXPORT_SYMBOL(sbp_parse_pr_out_transport_id);
 
