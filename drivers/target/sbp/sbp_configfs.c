@@ -45,7 +45,6 @@
 #include "sbp_base.h"
 #include "sbp_fabric.h"
 #include "sbp_management_agent.h"
-#include "sbp_proto.h"
 
 /* Local pointer to allocated TCM configfs fabric module */
 struct target_fabric_configfs *sbp_fabric_configfs;
