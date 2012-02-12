@@ -36,7 +36,6 @@
 #include "sbp_base.h"
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
-#include "sbp_util.h"
 
 /*
  * Wraps fw_run_transaction taking into account page size and max payload, and

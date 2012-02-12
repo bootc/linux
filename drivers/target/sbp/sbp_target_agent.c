@@ -32,7 +32,6 @@
 #include "sbp_login.h"
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
-#include "sbp_util.h"
 
 static int tgt_agent_rw_agent_state(struct fw_card *card,
 	int tcode, int generation, void *data,

@@ -6,8 +6,7 @@ firewire-sbp-target-y += \
 	sbp_management_agent.o \
 	sbp_proto.o \
 	sbp_scsi_cmnd.o \
-	sbp_target_agent.o \
-	sbp_util.o
+	sbp_target_agent.o
 
 obj-$(CONFIG_FIREWIRE_SBP_TARGET) += firewire-sbp-target.o
 

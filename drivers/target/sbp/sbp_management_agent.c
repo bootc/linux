@@ -32,7 +32,6 @@
 #include "sbp_base.h"
 #include "sbp_management_agent.h"
 #include "sbp_login.h"
-#include "sbp_util.h"
 
 static void sbp_mgt_agent_process(struct work_struct *work)
 {

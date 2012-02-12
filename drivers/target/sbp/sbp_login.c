@@ -35,7 +35,6 @@
 #include "sbp_management_agent.h"
 #include "sbp_login.h"
 #include "sbp_target_agent.h"
-#include "sbp_util.h"
 
 #define SESSION_MAINTENANCE_INTERVAL HZ
 
