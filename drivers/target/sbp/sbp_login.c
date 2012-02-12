@@ -272,10 +272,6 @@ void sbp_management_request_login(
 	pr_notice("mgt_agent LOGIN to LUN %d from %016llx\n",
 		se_lun->unpacked_lun, guid);
 
-	/*
-	 * check for any existing logins by comparing GUIDs
-	 * reject with access_denied if present
-	 */
 	sess = sbp_session_find_by_guid(tpg, guid);
 	if (sess) {
 		login = sbp_login_find_by_lun(sess, se_lun);
@@ -287,6 +283,14 @@ void sbp_management_request_login(
 			 * that can confuse initiators. Instead we need to
 			 * treat this like a reconnect, but send the login
 			 * response block like a fresh login.
+			 *
+			 * This is required particularly in the case of Apple
+			 * devices booting off the FireWire target, where
+			 * the firmware has an active login to the target. When
+			 * the OS takes control of the session it issues its own
+			 * LOGIN rather than a RECONNECT. To avoid the machine
+			 * waiting until the reconnect_hold expires, we can skip
+			 * the ACCESS_DENIED errors to speed things up.
 			 */
 
 			goto already_logged_in;
