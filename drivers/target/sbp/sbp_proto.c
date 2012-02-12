@@ -29,7 +29,7 @@
 #include "sbp_proto.h"
 
 /*
- * Handlers for Serial Attached SCSI (SBP)
+ * Handlers for Serial Bus Protocol 2/3 (SBP-2 / SBP-3)
  */
 u8 sbp_get_fabric_proto_ident(struct se_portal_group *se_tpg)
 {
