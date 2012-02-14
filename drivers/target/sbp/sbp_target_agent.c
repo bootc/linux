@@ -252,33 +252,36 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		return;
 
 	req = kzalloc(sizeof(*req), GFP_KERNEL);
-	if (!req)
-		goto out;
-
-	smp_rmb();
-	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE) {
-		sbp_free_request(req);
-		return;
-	}
-
-	/* read in the ORB */
-	ret = fw_run_transaction(sess->card, TCODE_READ_BLOCK_REQUEST,
-		sess->node_id, sess->generation, sess->speed,
-		agent->orb_pointer, &req->orb, sizeof(req->orb));
-	if (ret != RCODE_COMPLETE) {
-		pr_debug("tgt_orb fetch failed: %x\n", ret);
-		sbp_free_request(req);
-		goto out;
-	}
-
-	smp_rmb();
-	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE) {
-		sbp_free_request(req);
+	if (!req) {
+		atomic_cmpxchg(&agent->state, AGENT_STATE_ACTIVE,
+				AGENT_STATE_DEAD);
 		return;
 	}
 
 	req->agent = agent;
 	req->orb_pointer = agent->orb_pointer;
+	req->status.status = cpu_to_be32(
+			STATUS_BLOCK_ORB_OFFSET_HIGH(req->orb_pointer >> 32));
+	req->status.orb_low = cpu_to_be32(agent->orb_pointer & 0xfffffffc);
+	INIT_WORK(&req->work, tgt_agent_process_work);
+
+	/* read in the ORB */
+	ret = fw_run_transaction(sess->card, TCODE_READ_BLOCK_REQUEST,
+		sess->node_id, sess->generation, sess->speed,
+		req->orb_pointer, &req->orb, sizeof(req->orb));
+	if (ret != RCODE_COMPLETE) {
+		pr_debug("tgt_orb fetch failed: %x\n", ret);
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_DEAD(1) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+		sbp_send_status(req);
+		sbp_free_request(req);
+		atomic_cmpxchg(&agent->state, AGENT_STATE_ACTIVE,
+				AGENT_STATE_DEAD);
+		return;
+	}
 
 	pr_debug("tgt_orb ptr:0x%llx next_orb:0x%llx data_descriptor:0x%llx misc:0x%x\n",
 			req->orb_pointer,
@@ -287,47 +290,26 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 			be32_to_cpu(req->orb.misc));
 
 	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000) {
-		req->status.status = cpu_to_be32(
+		/* NULL next-ORB */
+		req->status.status |= cpu_to_be32(
 				STATUS_BLOCK_SRC(STATUS_SRC_ORB_FINISHED));
 	} else {
-		req->status.status = cpu_to_be32(
+		/* non-NULL next-ORB */
+		req->status.status |= cpu_to_be32(
 				STATUS_BLOCK_SRC(STATUS_SRC_ORB_CONTINUING));
 	}
 
-	req->status.status |= cpu_to_be32(
-			STATUS_BLOCK_ORB_OFFSET_HIGH(agent->orb_pointer >> 32));
-	req->status.orb_low = cpu_to_be32(agent->orb_pointer & 0xfffffffc);
-	INIT_WORK(&req->work, tgt_agent_process_work);
-
-	ret = queue_work(sbp_workqueue, &req->work);
-	if (!ret) {
-		pr_err("tgt_orb queue_work failed\n");
-		sbp_free_request(req);
-		goto out;
-	}
+	queue_work(sbp_workqueue, &req->work);
 
 	/* check if we should carry on processing */
 	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000) {
 		/* null next_orb */
-		goto out;
+		atomic_cmpxchg(&agent->state, AGENT_STATE_ACTIVE,
+				AGENT_STATE_SUSPENDED);
+	} else {
+		agent->orb_pointer = sbp2_pointer_to_addr(&req->orb.next_orb);
+		queue_work(sbp_workqueue, &agent->work);
 	}
-
-	smp_rmb();
-	if (atomic_read(&agent->state) != AGENT_STATE_ACTIVE)
-		return;
-
-	agent->orb_pointer = sbp2_pointer_to_addr(&req->orb.next_orb);
-
-	if (!queue_work(sbp_workqueue, &agent->work)) {
-		pr_err("tgt_orb fetch queue_work failed\n");
-		goto out;
-	}
-
-	return;
-
-out:
-	atomic_cmpxchg(&agent->state,
-		AGENT_STATE_ACTIVE, AGENT_STATE_SUSPENDED);
 }
 
 struct sbp_target_agent *sbp_target_agent_register(
