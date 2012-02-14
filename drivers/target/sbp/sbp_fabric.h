@@ -9,7 +9,6 @@ struct se_node_acl *sbp_alloc_fabric_acl(struct se_portal_group *);
 void sbp_release_fabric_acl(struct se_portal_group *,
 		struct se_node_acl *);
 u32 sbp_tpg_get_inst_index(struct se_portal_group *);
-int sbp_new_cmd(struct se_cmd *se_cmd);
 void sbp_release_cmd(struct se_cmd *se_cmd);
 int sbp_shutdown_session(struct se_session *);
 void sbp_close_session(struct se_session *);

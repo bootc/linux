@@ -107,19 +107,6 @@ u32 sbp_tpg_get_inst_index(struct se_portal_group *se_tpg)
 	return 1;
 }
 
-int sbp_new_cmd(struct se_cmd *se_cmd)
-{
-	struct sbp_target_request *req = container_of(se_cmd,
-			struct sbp_target_request, se_cmd);
-	int ret;
-
-	ret = transport_generic_allocate_tasks(se_cmd, req->cmd_buf);
-	if (ret)
-		return ret;
-
-	return transport_generic_map_mem_to_cmd(se_cmd, NULL, 0, NULL, 0);
-}
-
 void sbp_release_cmd(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
