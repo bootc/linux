@@ -206,7 +206,7 @@ u32 sbp_get_task_tag(struct se_cmd *se_cmd)
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
 
-	/* only used for printk and family? */
+	/* only used for printk until we do TMRs */
 	return (u32)req->orb_pointer;
 }
 
