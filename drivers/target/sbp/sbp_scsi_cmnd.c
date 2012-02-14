@@ -134,7 +134,8 @@ static int sbp_fetch_page_table(struct sbp_target_request *req)
 	return 0;
 }
 
-static void sbp_calc_data_length_direction(struct sbp_target_request *req)
+static void sbp_calc_data_length_direction(struct sbp_target_request *req,
+	u32 *data_len, enum dma_data_direction *data_dir)
 {
 	int data_size, direction, idx;
 
@@ -142,21 +143,21 @@ static void sbp_calc_data_length_direction(struct sbp_target_request *req)
 	direction = CMDBLK_ORB_DIRECTION(be32_to_cpu(req->orb.misc));
 
 	if (!data_size) {
-		req->data_len = 0;
-		req->data_dir = DMA_NONE;
+		*data_len = 0;
+		*data_dir = DMA_NONE;
 		return;
 	}
 
-	req->data_dir = direction ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
+	*data_dir = direction ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
 
 	if (req->pg_tbl) {
-		req->data_len = 0;
+		*data_len = 0;
 		for (idx = 0; idx < data_size; idx++) {
-			req->data_len += be16_to_cpu(
+			*data_len += be16_to_cpu(
 					req->pg_tbl[idx].segment_length);
 		}
 	} else {
-		req->data_len = data_size;
+		*data_len = data_size;
 	}
 }
 
@@ -165,6 +166,8 @@ void sbp_handle_command(struct sbp_target_request *req)
 	struct sbp_login_descriptor *login = req->agent->login;
 	struct sbp_session *sess = login->sess;
 	int ret, unpacked_lun;
+	u32 data_length;
+	enum dma_data_direction data_dir;
 
 	ret = sbp_fetch_command(req);
 	if (ret) {
@@ -194,15 +197,14 @@ void sbp_handle_command(struct sbp_target_request *req)
 	}
 
 	unpacked_lun = req->agent->login->lun->unpacked_lun;
-	sbp_calc_data_length_direction(req);
+	sbp_calc_data_length_direction(req, &data_length, &data_dir);
 
-	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d "
-		"data_dir:%d\n", unpacked_lun, req->data_len,
-		req->data_dir);
+	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d data_dir:%d\n",
+			unpacked_lun, data_length, data_dir);
 
 	target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
-			req->sense_buf, unpacked_lun, req->data_len,
-			MSG_SIMPLE_TAG, req->data_dir, 0);
+			req->sense_buf, unpacked_lun, data_length,
+			MSG_SIMPLE_TAG, data_dir, 0);
 }
 
 /*
@@ -213,9 +215,7 @@ int sbp_rw_data(struct sbp_target_request *req)
 {
 	int ret, tcode;
 
-	WARN_ON(!req->data_len);
-
-	tcode = (req->data_dir == DMA_TO_DEVICE) ?
+	tcode = (req->se_cmd.data_direction == DMA_TO_DEVICE) ?
 		TCODE_READ_BLOCK_REQUEST :
 		TCODE_WRITE_BLOCK_REQUEST;
 
@@ -241,7 +241,7 @@ int sbp_rw_data(struct sbp_target_request *req)
 	} else {
 		ret = sbp_run_transaction(req, tcode,
 				sbp2_pointer_to_addr(&req->orb.data_descriptor),
-				req->data_buf, req->data_len);
+				req->data_buf, req->se_cmd.data_length);
 	}
 
 	return ret;

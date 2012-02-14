@@ -152,19 +152,6 @@ int sbp_write_pending(struct se_cmd *se_cmd)
 			struct sbp_target_request, se_cmd);
 	int ret;
 
-	if (!req->data_len)
-		return -EINVAL;
-
-	if (req->data_dir != DMA_TO_DEVICE) {
-		pr_err("sbp_write_pending: incorrect data direction\n");
-		return -EINVAL;
-	}
-
-	if (req->data_len != se_cmd->data_length) {
-		pr_warn("sbp_write_pending: dodgy data length (%d != %d)\n",
-			req->data_len, se_cmd->data_length);
-	}
-
 	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 	if (!req->data_buf)
 		return -ENOMEM;
@@ -220,27 +207,6 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 	struct sbp_target_request *req = container_of(se_cmd,
 			struct sbp_target_request, se_cmd);
 	int ret;
-
-	if (!req->data_len) {
-		req->status.status |= cpu_to_be32(
-			STATUS_BLOCK_RESP(STATUS_RESP_ILLEGAL_REQUEST) |
-			STATUS_BLOCK_DEAD(0) |
-			STATUS_BLOCK_LEN(1) |
-			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
-		sbp_send_status(req);
-		pr_err("sbp_queue_data_in: no initiator data buffers\n");
-		return 0;
-	}
-
-	if (req->data_dir != DMA_FROM_DEVICE) {
-		pr_err("sbp_queue_data_in: incorrect data direction\n");
-		return -EINVAL;
-	}
-
-	if (req->data_len != se_cmd->data_length) {
-		pr_warn("sbp_write_pending: dodgy data length (%d != %d)\n",
-			req->data_len, se_cmd->data_length);
-	}
 
 	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 	if (!req->data_buf)

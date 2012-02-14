@@ -17,8 +17,6 @@ struct sbp_target_request {
 	struct se_cmd se_cmd;
 	struct sbp_page_table_entry *pg_tbl;
 	void *cmd_buf;
-	u32 data_len;
-	enum dma_data_direction	data_dir;
 	void *data_buf;
 
 	unsigned char sense_buf[TRANSPORT_SENSE_BUFFER];
