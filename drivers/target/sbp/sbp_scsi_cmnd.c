@@ -164,7 +164,7 @@ void sbp_handle_command(struct sbp_target_request *req)
 {
 	struct sbp_login_descriptor *login = req->agent->login;
 	struct sbp_session *sess = login->sess;
-	int ret;
+	int ret, unpacked_lun;
 
 	ret = sbp_fetch_command(req);
 	if (ret) {
@@ -193,16 +193,16 @@ void sbp_handle_command(struct sbp_target_request *req)
 		return;
 	}
 
-	req->unpacked_lun = req->agent->login->lun->unpacked_lun;
+	unpacked_lun = req->agent->login->lun->unpacked_lun;
 	sbp_calc_data_length_direction(req);
 
 	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d "
-		"data_dir:%d\n", req->unpacked_lun, req->data_len,
+		"data_dir:%d\n", unpacked_lun, req->data_len,
 		req->data_dir);
 
 	target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
-			req->sense_buf, req->unpacked_lun, 0, MSG_SIMPLE_TAG,
-			req->data_dir, TARGET_SCF_UNKNOWN_SIZE);
+			req->sense_buf, unpacked_lun, req->data_len,
+			MSG_SIMPLE_TAG, req->data_dir, 0);
 }
 
 /*
