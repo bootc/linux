@@ -261,6 +261,9 @@ int sbp_send_status(struct sbp_target_request *req)
 		return ret;
 	}
 
+	pr_debug("sbp_send_status: status write complete for ORB: 0x%llx\n",
+			req->orb_pointer);
+
 	return 0;
 }
 

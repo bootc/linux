@@ -94,7 +94,7 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 
 		agent->orb_pointer = sbp2_pointer_to_addr(ptr);
 
-		pr_debug("tgt_agent ORB_POINTER write: %llu\n",
+		pr_debug("tgt_agent ORB_POINTER write: 0x%llx\n",
 			agent->orb_pointer);
 
 		ret = queue_work(sbp_workqueue, &agent->work);
