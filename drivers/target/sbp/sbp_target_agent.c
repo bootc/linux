@@ -290,7 +290,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 			be32_to_cpu(req->orb.misc));
 
 	if (req->orb_pointer >> 32)
-		pr_info("ORB with high bits set!\n");
+		pr_debug("ORB with high bits set\n");
 
 	if (be32_to_cpu(req->orb.next_orb.high) & 0x80000000) {
 		/* NULL next-ORB */
@@ -310,7 +310,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		atomic_cmpxchg(&agent->state, AGENT_STATE_ACTIVE,
 				AGENT_STATE_SUSPENDED);
 	} else {
-		pr_info("non-NULL next-ORB!\n");
+		pr_debug("non-NULL next-ORB\n");
 		agent->orb_pointer = sbp2_pointer_to_addr(&req->orb.next_orb);
 		queue_work(sbp_workqueue, &agent->work);
 	}

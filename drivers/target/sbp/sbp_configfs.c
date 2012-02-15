@@ -680,8 +680,6 @@ static int sbp_register_configfs(void)
 	struct target_fabric_configfs *fabric;
 	int ret;
 
-	pr_info("FireWire SBP fabric module %s\n", SBP_VERSION);
-
 	fabric = target_fabric_configfs_init(THIS_MODULE, "sbp");
 	if (!fabric) {
 		pr_err("target_fabric_configfs_init() failed\n");
