@@ -130,6 +130,7 @@ struct sbp_login_descriptor {
 struct sbp_session {
 	struct se_session *se_sess;
 	struct list_head login_list;
+	spinlock_t login_list_lock;
 	struct delayed_work maint_work;
 
 	u64 guid; /* login_owner_EUI_64 */

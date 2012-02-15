@@ -71,11 +71,15 @@ static struct sbp_session *sbp_session_find_by_guid(
 {
 	struct se_session *se_sess;
 
+	spin_lock(&tpg->se_tpg.session_lock);
 	list_for_each_entry(se_sess, &tpg->se_tpg.tpg_sess_list, sess_list) {
 		struct sbp_session *sess = se_sess->fabric_sess_ptr;
-		if (sess->guid == guid)
+		if (sess->guid == guid) {
+			spin_unlock(&tpg->se_tpg.session_lock);
 			return sess;
+		}
 	}
+	spin_unlock(&tpg->se_tpg.session_lock);
 
 	return NULL;
 }
@@ -85,10 +89,14 @@ static struct sbp_login_descriptor *sbp_login_find_by_lun(
 {
 	struct sbp_login_descriptor *login;
 
+	spin_lock(&session->login_list_lock);
 	list_for_each_entry(login, &session->login_list, link) {
-		if (login->lun == lun)
+		if (login->lun == lun) {
+			spin_unlock(&session->login_list_lock);
 			return login;
+		}
 	}
+	spin_unlock(&session->login_list_lock);
 
 	return NULL;
 }
@@ -101,10 +109,12 @@ static int sbp_login_count_all_by_lun(
 	struct se_session *se_sess;
 	int count = 0;
 
+	spin_lock(&tpg->se_tpg.session_lock);
 	list_for_each_entry(se_sess, &tpg->se_tpg.tpg_sess_list, sess_list) {
 		struct sbp_session *sess = se_sess->fabric_sess_ptr;
 		struct sbp_login_descriptor *login;
 
+		spin_lock(&sess->login_list_lock);
 		list_for_each_entry(login, &sess->login_list, link) {
 			if (login->lun != lun)
 				continue;
@@ -117,7 +127,9 @@ static int sbp_login_count_all_by_lun(
 			if (login->exclusive)
 				count++;
 		}
+		spin_unlock(&sess->login_list_lock);
 	}
+	spin_unlock(&tpg->se_tpg.session_lock);
 
 	return count;
 }
@@ -127,15 +139,22 @@ static struct sbp_login_descriptor *sbp_login_find_by_id(
 {
 	struct se_session *se_sess;
 
+	spin_lock(&tpg->se_tpg.session_lock);
 	list_for_each_entry(se_sess, &tpg->se_tpg.tpg_sess_list, sess_list) {
 		struct sbp_session *sess = se_sess->fabric_sess_ptr;
 		struct sbp_login_descriptor *login;
 
+		spin_lock(&sess->login_list_lock);
 		list_for_each_entry(login, &sess->login_list, link) {
-			if (login->login_id == login_id)
+			if (login->login_id == login_id) {
+				spin_unlock(&sess->login_list_lock);
+				spin_unlock(&tpg->se_tpg.session_lock);
 				return login;
+			}
 		}
+		spin_unlock(&sess->login_list_lock);
 	}
+	spin_unlock(&tpg->se_tpg.session_lock);
 
 	return NULL;
 }
@@ -195,9 +214,12 @@ static struct sbp_session *sbp_session_create(
 		return ERR_PTR(-EPERM);
 	}
 
-	INIT_LIST_HEAD(&sess->login_list);
 	sess->se_sess->se_node_acl = se_nacl;
+
+	INIT_LIST_HEAD(&sess->login_list);
+	spin_lock_init(&sess->login_list_lock);
 	INIT_DELAYED_WORK(&sess->maint_work, session_maintenance_work);
+
 	sess->guid = guid;
 
 	transport_register_session(&tpg->se_tpg, se_nacl, sess->se_sess, sess);
@@ -207,8 +229,12 @@ static struct sbp_session *sbp_session_create(
 
 static void sbp_session_release(struct sbp_session *sess, bool cancel_work)
 {
-	if (!list_empty(&sess->login_list))
+	spin_lock(&sess->login_list_lock);
+	if (!list_empty(&sess->login_list)) {
+		spin_unlock(&sess->login_list_lock);
 		return;
+	}
+	spin_unlock(&sess->login_list_lock);
 
 	transport_deregister_session_configfs(sess->se_sess);
 	transport_deregister_session(sess->se_sess);
@@ -225,11 +251,16 @@ static void sbp_session_release(struct sbp_session *sess, bool cancel_work)
 static void sbp_login_release(struct sbp_login_descriptor *login,
 	bool cancel_work)
 {
+	struct sbp_session *sess = login->sess;
+
 	/* FIXME: abort/wait on tasks */
 
+	spin_lock(&sess->login_list_lock);
 	list_del(&login->link);
+	spin_unlock(&sess->login_list_lock);
+
 	sbp_target_agent_unregister(login->tgt_agt);
-	sbp_session_release(login->sess, cancel_work);
+	sbp_session_release(sess, cancel_work);
 	kfree(login);
 }
 
@@ -404,7 +435,9 @@ void sbp_management_request_login(
 		return;
 	}
 
+	spin_lock(&sess->login_list_lock);
 	list_add_tail(&login->link, &sess->login_list);
+	spin_unlock(&sess->login_list_lock);
 
 already_logged_in:
 	response = kzalloc(sizeof(*response), GFP_KERNEL);
@@ -592,9 +625,13 @@ static void session_reconnect_expired(struct sbp_session *sess)
 
 	pr_info("Reconnect timer expired for node: %016llx\n", sess->guid);
 
+	spin_lock(&sess->login_list_lock);
 	list_for_each_entry_safe(login, temp, &sess->login_list, link) {
+		spin_unlock(&sess->login_list_lock);
 		sbp_login_release(login, false);
+		spin_lock(&sess->login_list_lock);
 	}
+	spin_unlock(&sess->login_list_lock);
 
 	/* sbp_login_release() calls sbp_session_release() */
 }
@@ -605,8 +642,12 @@ static void session_maintenance_work(struct work_struct *work)
 		maint_work.work);
 
 	/* could be called while tearing down the session */
-	if (list_empty(&sess->login_list))
+	spin_lock(&sess->login_list_lock);
+	if (list_empty(&sess->login_list)) {
+		spin_unlock(&sess->login_list_lock);
 		return;
+	}
+	spin_unlock(&sess->login_list_lock);
 
 	if (sess->node_id != -1) {
 		/* check for bus reset and make node_id invalid */
