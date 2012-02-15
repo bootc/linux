@@ -66,10 +66,27 @@ static const u32 sbp_unit_directory_template[] = {
 	0x3c000001, /* firmware_revision: 1 */
 };
 
+static int sbp_count_se_tpg_luns(struct se_portal_group *tpg)
+{
+	int i, count = 0;
+
+	spin_lock(&tpg->tpg_lun_lock);
+	for (i = 0; i < TRANSPORT_MAX_LUNS_PER_TPG; i++) {
+		struct se_lun *se_lun = &tpg->tpg_lun_list[i];
+
+		if (se_lun->lun_status == TRANSPORT_LUN_STATUS_FREE)
+			continue;
+
+		count++;
+	}
+	spin_unlock(&tpg->tpg_lun_lock);
+
+	return count;
+}
+
 static int sbp_update_unit_directory(struct sbp_tport *tport)
 {
-	struct sbp_lun *lun;
-	int num_luns = 0, num_entries, idx = 0, mgt_agt_addr, ret;
+	int num_luns, num_entries, idx = 0, mgt_agt_addr, ret, i;
 	u32 *data;
 
 	if (tport->unit_directory.data) {
@@ -81,8 +98,7 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 	if (!tport->enable || !tport->tpg)
 		return 0;
 
-	list_for_each_entry(lun, &tport->tpg->lun_list, link)
-		num_luns++;
+	num_luns = sbp_count_se_tpg_luns(&tport->tpg->se_tpg);
 
 	/*
 	 * Number of entries in the final unit directory:
@@ -132,16 +148,28 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 	/* unit unique ID (leaf is just after LUNs) */
 	data[idx++] = 0x8d000000 | (num_luns + 1);
 
-	list_for_each_entry(lun, &tport->tpg->lun_list, link) {
-		struct se_lun *se_lun = lun->se_lun;
-		struct se_device *dev = se_lun->lun_se_dev;
-		int type = dev->transport->get_device_type(dev);
+	spin_lock(&tport->tpg->se_tpg.tpg_lun_lock);
+	for (i = 0; i < TRANSPORT_MAX_LUNS_PER_TPG; i++) {
+		struct se_lun *se_lun = &tport->tpg->se_tpg.tpg_lun_list[i];
+		struct se_device *dev;
+		int type;
+
+		if (se_lun->lun_status == TRANSPORT_LUN_STATUS_FREE)
+			continue;
+
+		spin_unlock(&tport->tpg->se_tpg.tpg_lun_lock);
+
+		dev = se_lun->lun_se_dev;
+		type = dev->transport->get_device_type(dev);
 
 		/* logical_unit_number */
 		data[idx++] = 0x14000000 |
 			((type << 16) & 0x1f0000) |
 			(se_lun->unpacked_lun & 0xffff);
+
+		spin_lock(&tport->tpg->se_tpg.tpg_lun_lock);
 	}
+	spin_unlock(&tport->tpg->se_tpg.tpg_lun_lock);
 
 	/* unit unique ID leaf */
 	data[idx++] = 2 << 16;
@@ -249,14 +277,6 @@ static int sbp_post_link_lun(
 		struct se_lun *se_lun)
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
-	struct sbp_lun *lun;
-
-	lun = kmalloc(sizeof(*lun), GFP_KERNEL);
-	if (!lun)
-		return -ENOMEM;
-
-	lun->se_lun = se_lun;
-	list_add_tail(&lun->link, &tpg->lun_list);
 
 	return sbp_update_unit_directory(tpg->tport);
 }
@@ -267,20 +287,9 @@ static void sbp_pre_unlink_lun(
 {
 	struct sbp_tpg *tpg = container_of(se_tpg, struct sbp_tpg, se_tpg);
 	struct sbp_tport *tport = tpg->tport;
-	struct sbp_lun *lun;
 	int ret;
 
-	list_for_each_entry(lun, &tpg->lun_list, link) {
-		if (lun->se_lun == se_lun)
-			break;
-	}
-
-	BUG_ON(lun == NULL);
-
-	list_del(&lun->link);
-	kfree(lun);
-
-	if (list_empty(&tpg->lun_list))
+	if (sbp_count_se_tpg_luns(&tpg->se_tpg) == 0)
 		tport->enable = 0;
 
 	ret = sbp_update_unit_directory(tport);
@@ -326,8 +335,6 @@ static struct se_portal_group *sbp_make_tpg(
 	tport->mgt_orb_timeout = 15;
 	tport->max_reconnect_timeout = 5;
 	tport->max_logins_per_lun = 1;
-
-	INIT_LIST_HEAD(&tpg->lun_list);
 
 	tport->mgt_agt = sbp_management_agent_register(tport);
 	if (IS_ERR(tport->mgt_agt)) {
@@ -473,7 +480,7 @@ static ssize_t sbp_tpg_store_enable(
 		return count;
 
 	if (val) {
-		if (list_empty(&tpg->lun_list)) {
+		if (sbp_count_se_tpg_luns(&tpg->se_tpg) == 0) {
 			pr_err("Cannot enable a target with no LUNs!\n");
 			return -EINVAL;
 		}

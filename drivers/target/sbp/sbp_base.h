@@ -152,11 +152,6 @@ struct sbp_nacl {
 	struct se_node_acl se_node_acl;
 };
 
-struct sbp_lun {
-	struct list_head link;
-	struct se_lun *se_lun;
-};
-
 struct sbp_tpg {
 	/* Target portal group tag for TCM */
 	u16 tport_tpgt;
@@ -164,8 +159,6 @@ struct sbp_tpg {
 	struct sbp_tport *tport;
 	/* Returned by sbp_make_tpg() */
 	struct se_portal_group se_tpg;
-
-	struct list_head lun_list;
 };
 
 struct sbp_tport {
