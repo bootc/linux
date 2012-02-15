@@ -27,8 +27,6 @@
 
 #include <target/target_core_base.h>
 
-#include "../../firewire/core.h"
-
 #include "sbp_base.h"
 #include "sbp_management_agent.h"
 #include "sbp_login.h"
