@@ -821,14 +821,7 @@ void fw_send_response(struct fw_card *card,
 EXPORT_SYMBOL(fw_send_response);
 
 /**
- * fw_get_request_speed() - Discover bus speed used for this request
- * @request:	The struct fw_request from which to obtain the speed.
- *
- * In certain circumstances it's important to be able to obtain the speed at
- * which a request was made to an address handler, for example when
- * implementing an SBP-2 or SBP-3 target. This function inspects the response
- * object to obtain the speed, which is copied from the request packet in
- * allocate_request().
+ * fw_get_request_speed() - returns speed at which the @request was received
  */
 int fw_get_request_speed(struct fw_request *request)
 {
