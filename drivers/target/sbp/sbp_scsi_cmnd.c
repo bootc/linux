@@ -44,7 +44,7 @@
 static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
 	unsigned long long offset, void *payload, size_t length)
 {
-	struct sbp_login_descriptor *login = req->agent->login;
+	struct sbp_login_descriptor *login = req->login;
 	struct sbp_session *sess = login->sess;
 	int ret, speed, max_payload, pg_size, seg_off = 0, seg_len;
 
@@ -163,7 +163,7 @@ static void sbp_calc_data_length_direction(struct sbp_target_request *req,
 
 void sbp_handle_command(struct sbp_target_request *req)
 {
-	struct sbp_login_descriptor *login = req->agent->login;
+	struct sbp_login_descriptor *login = req->login;
 	struct sbp_session *sess = login->sess;
 	int ret, unpacked_lun;
 	u32 data_length;
@@ -196,7 +196,7 @@ void sbp_handle_command(struct sbp_target_request *req)
 		return;
 	}
 
-	unpacked_lun = req->agent->login->lun->unpacked_lun;
+	unpacked_lun = req->login->lun->unpacked_lun;
 	sbp_calc_data_length_direction(req, &data_length, &data_dir);
 
 	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d data_dir:%d\n",
@@ -250,7 +250,7 @@ int sbp_rw_data(struct sbp_target_request *req)
 int sbp_send_status(struct sbp_target_request *req)
 {
 	int ret, length;
-	struct sbp_login_descriptor *login = req->agent->login;
+	struct sbp_login_descriptor *login = req->login;
 
 	length = (((be32_to_cpu(req->status.status) >> 24) & 0x07) + 1) * 4;
 

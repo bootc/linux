@@ -3,21 +3,24 @@
 
 #include <linux/firewire.h>
 #include <linux/types.h>
+#include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <target/target_core_base.h>
 
 #include "sbp_base.h"
 
 struct sbp_target_agent {
+	spinlock_t lock;
 	struct fw_address_handler handler;
 	struct sbp_login_descriptor *login;
-	atomic_t state;
+	int state;
 	struct work_struct work;
 	u64 orb_pointer;
+	bool doorbell;
 };
 
 struct sbp_target_request {
-	struct sbp_target_agent *agent;
+	struct sbp_login_descriptor *login;
 	u64 orb_pointer;
 	struct sbp_command_block_orb orb;
 	struct sbp_status_block status;
