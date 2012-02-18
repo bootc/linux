@@ -1,4 +1,7 @@
 
+#include <linux/types.h>
+#include <target/target_core_base.h>
+
 int sbp_check_true(struct se_portal_group *);
 int sbp_check_false(struct se_portal_group *);
 char *sbp_get_fabric_name(void);

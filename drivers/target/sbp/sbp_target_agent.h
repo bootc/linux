@@ -1,3 +1,12 @@
+#ifndef _SBP_TARGET_AGENT_H
+#define _SBP_TARGET_AGENT_H
+
+#include <linux/firewire.h>
+#include <linux/types.h>
+#include <linux/workqueue.h>
+#include <target/target_core_base.h>
+
+#include "sbp_base.h"
 
 struct sbp_target_agent {
 	struct fw_address_handler handler;
@@ -25,3 +34,5 @@ struct sbp_target_request {
 struct sbp_target_agent *sbp_target_agent_register(
 		struct sbp_login_descriptor *login);
 void sbp_target_agent_unregister(struct sbp_target_agent *agent);
+
+#endif

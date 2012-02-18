@@ -1,3 +1,11 @@
+#ifndef _SBP_BASE_H
+#define _SBP_BASE_H
+
+#include <linux/firewire.h>
+#include <linux/spinlock.h>
+#include <linux/types.h>
+#include <linux/workqueue.h>
+#include <target/target_core_base.h>
 
 #define SBP_VERSION  "v0.1"
 #define SBP_NAMELEN 32
@@ -202,3 +210,4 @@ static inline void addr_to_sbp2_pointer(u64 addr, struct sbp2_pointer *ptr)
 	ptr->low = cpu_to_be32(addr);
 }
 
+#endif
