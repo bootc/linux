@@ -153,7 +153,10 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 out:
 	fw_card_put(req->card);
 	kfree(req);
-	atomic_set(&agent->state, MANAGEMENT_AGENT_STATE_IDLE);
+
+	spin_lock_bh(&agent->lock);
+	agent->state = MANAGEMENT_AGENT_STATE_IDLE;
+	spin_unlock_bh(&agent->lock);
 }
 
 static void sbp_mgt_agent_rw(struct fw_card *card,
@@ -163,36 +166,33 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 {
 	struct sbp_management_agent *agent = callback_data;
 	struct sbp2_pointer *ptr = data;
+	int rcode = RCODE_ADDRESS_ERROR;
 
-	if (!agent->tport->enable) {
-		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
-		return;
-	}
+	if (!agent->tport->enable)
+		goto out;
 
-	if ((offset != agent->handler.offset) || (length != 8)) {
-		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
-		return;
-	}
+	if ((offset != agent->handler.offset) || (length != 8))
+		goto out;
 
 	if (tcode == TCODE_WRITE_BLOCK_REQUEST) {
 		struct sbp_management_request *req;
-		int ret;
+		int prev_state;
 
-		smp_wmb();
-		if (atomic_cmpxchg(&agent->state,
-					MANAGEMENT_AGENT_STATE_IDLE,
-					MANAGEMENT_AGENT_STATE_BUSY) !=
-				MANAGEMENT_AGENT_STATE_IDLE) {
+		spin_lock_bh(&agent->lock);
+		prev_state = agent->state;
+		agent->state = MANAGEMENT_AGENT_STATE_BUSY;
+		spin_unlock_bh(&agent->lock);
+
+		if (prev_state == MANAGEMENT_AGENT_STATE_BUSY) {
 			pr_notice("ignoring management request while busy\n");
-
-			fw_send_response(card, request, RCODE_CONFLICT_ERROR);
-			return;
+			rcode = RCODE_CONFLICT_ERROR;
+			goto out;
 		}
 
 		req = kzalloc(sizeof(*req), GFP_ATOMIC);
 		if (!req) {
-			fw_send_response(card, request, RCODE_CONFLICT_ERROR);
-			return;
+			rcode = RCODE_CONFLICT_ERROR;
+			goto out;
 		}
 
 		req->card = fw_card_get(card);
@@ -203,21 +203,17 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
 
-		ret = queue_work(sbp_workqueue, &agent->work);
-		if (!ret) {
-			/* pretend we're busy */
-			kfree(req);
-			fw_send_response(card, request, RCODE_CONFLICT_ERROR);
-			return;
-		}
-
-		fw_send_response(card, request, RCODE_COMPLETE);
+		queue_work(sbp_workqueue, &agent->work);
+		rcode = RCODE_COMPLETE;
 	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
 		addr_to_sbp2_pointer(agent->orb_offset, ptr);
-		fw_send_response(card, request, RCODE_COMPLETE);
+		rcode = RCODE_COMPLETE;
 	} else {
-		fw_send_response(card, request, RCODE_TYPE_ERROR);
+		rcode = RCODE_TYPE_ERROR;
 	}
+
+out:
+	fw_send_response(card, request, RCODE_ADDRESS_ERROR);
 }
 
 struct sbp_management_agent *sbp_management_agent_register(
@@ -230,11 +226,12 @@ struct sbp_management_agent *sbp_management_agent_register(
 	if (!agent)
 		return ERR_PTR(-ENOMEM);
 
+	spin_lock_init(&agent->lock);
 	agent->tport = tport;
 	agent->handler.length = 0x08;
 	agent->handler.address_callback = sbp_mgt_agent_rw;
 	agent->handler.callback_data = agent;
-	atomic_set(&agent->state, MANAGEMENT_AGENT_STATE_IDLE);
+	agent->state = MANAGEMENT_AGENT_STATE_IDLE;
 	INIT_WORK(&agent->work, sbp_mgt_agent_process);
 	agent->orb_offset = 0;
 	agent->request = NULL;
@@ -251,10 +248,7 @@ struct sbp_management_agent *sbp_management_agent_register(
 
 void sbp_management_agent_unregister(struct sbp_management_agent *agent)
 {
-	if (atomic_read(&agent->state) != MANAGEMENT_AGENT_STATE_IDLE)
-		flush_work_sync(&agent->work);
-
 	fw_core_remove_address_handler(&agent->handler);
+	cancel_work_sync(&agent->work);
 	kfree(agent);
 }
-
