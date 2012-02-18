@@ -213,7 +213,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 	}
 
 out:
-	fw_send_response(card, request, RCODE_ADDRESS_ERROR);
+	fw_send_response(card, request, rcode);
 }
 
 struct sbp_management_agent *sbp_management_agent_register(
