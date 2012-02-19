@@ -85,9 +85,10 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 	switch (tcode) {
 	case TCODE_WRITE_BLOCK_REQUEST:
 		spin_lock_bh(&agent->lock);
-		if (agent->state != AGENT_STATE_SUSPENDED ||
+		if (agent->state != AGENT_STATE_SUSPENDED &&
 				agent->state != AGENT_STATE_RESET) {
 			spin_unlock_bh(&agent->lock);
+			pr_notice("Ignoring ORB_POINTER write while active.\n");
 			return RCODE_CONFLICT_ERROR;
 		}
 		agent->state = AGENT_STATE_ACTIVE;
