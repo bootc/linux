@@ -130,15 +130,14 @@ struct sbp_login_descriptor {
 	u64 status_fifo_addr;
 	int exclusive;
 	u16 login_id;
-	atomic_t unsolicited_status_enable;
 
 	struct sbp_target_agent *tgt_agt;
 };
 
 struct sbp_session {
+	spinlock_t lock;
 	struct se_session *se_sess;
 	struct list_head login_list;
-	spinlock_t login_list_lock;
 	struct delayed_work maint_work;
 
 	u64 guid; /* login_owner_EUI_64 */

@@ -486,12 +486,12 @@ static ssize_t sbp_tpg_store_enable(
 		}
 	} else {
 		/* XXX: force-shutdown sessions instead? */
-		spin_lock(&se_tpg->session_lock);
+		spin_lock_bh(&se_tpg->session_lock);
 		if (!list_empty(&se_tpg->tpg_sess_list)) {
-			spin_unlock(&se_tpg->session_lock);
+			spin_unlock_bh(&se_tpg->session_lock);
 			return -EBUSY;
 		}
-		spin_unlock(&se_tpg->session_lock);
+		spin_unlock_bh(&se_tpg->session_lock);
 	}
 
 	tport->enable = val;

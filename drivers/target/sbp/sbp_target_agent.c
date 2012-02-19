@@ -33,8 +33,7 @@
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
 
-static int tgt_agent_rw_agent_state(struct fw_card *card,
-		int tcode, int generation, void *data,
+static int tgt_agent_rw_agent_state(struct fw_card *card, int tcode, void *data,
 		struct sbp_target_agent *agent)
 {
 	__be32 state;
@@ -59,8 +58,7 @@ static int tgt_agent_rw_agent_state(struct fw_card *card,
 	}
 }
 
-static int tgt_agent_rw_agent_reset(struct fw_card *card,
-		int tcode, int generation, void *data,
+static int tgt_agent_rw_agent_reset(struct fw_card *card, int tcode, void *data,
 		struct sbp_target_agent *agent)
 {
 	switch (tcode) {
@@ -76,8 +74,7 @@ static int tgt_agent_rw_agent_reset(struct fw_card *card,
 	}
 }
 
-static int tgt_agent_rw_orb_pointer(struct fw_card *card,
-		int tcode, int generation, void *data,
+static int tgt_agent_rw_orb_pointer(struct fw_card *card, int tcode, void *data,
 		struct sbp_target_agent *agent)
 {
 	struct sbp2_pointer *ptr = data;
@@ -116,8 +113,7 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card,
 	}
 }
 
-static int tgt_agent_rw_doorbell(struct fw_card *card,
-		int tcode, int generation, void *data,
+static int tgt_agent_rw_doorbell(struct fw_card *card, int tcode, void *data,
 		struct sbp_target_agent *agent)
 {
 	switch (tcode) {
@@ -147,13 +143,12 @@ static int tgt_agent_rw_doorbell(struct fw_card *card,
 }
 
 static int tgt_agent_rw_unsolicited_status_enable(struct fw_card *card,
-		int tcode, int generation, void *data,
-		struct sbp_target_agent *agent)
+		int tcode, void *data, struct sbp_target_agent *agent)
 {
 	switch (tcode) {
 	case TCODE_WRITE_QUADLET_REQUEST:
 		pr_debug("tgt_agent UNSOLICITED_STATUS_ENABLE\n");
-		atomic_set(&agent->login->unsolicited_status_enable, 1);
+		/* ignored as we don't send unsolicited status */
 		return RCODE_COMPLETE;
 
 	case TCODE_READ_QUADLET_REQUEST:
@@ -170,46 +165,51 @@ static void tgt_agent_rw(struct fw_card *card, struct fw_request *request,
 		void *callback_data)
 {
 	struct sbp_target_agent *agent = callback_data;
-	int rcode = RCODE_ADDRESS_ERROR;
+	struct sbp_session *sess = agent->login->sess;
+	int sess_gen, sess_node, rcode;
+
+	spin_lock_bh(&sess->lock);
+	sess_gen = sess->generation;
+	sess_node = sess->node_id;
+	spin_unlock_bh(&sess->lock);
+
+	if (generation != sess_gen) {
+		pr_notice("ignoring request with wrong generation\n");
+		rcode = RCODE_TYPE_ERROR;
+		goto out;
+	}
+
+	if (source != sess_node) {
+		pr_notice("ignoring request from foreign node (%x != %x)\n",
+				source, sess_node);
+		rcode = RCODE_TYPE_ERROR;
+		goto out;
+	}
 
 	/* turn offset into the offset from the start of the block */
 	offset -= agent->handler.offset;
 
-	if (generation != agent->login->sess->generation) {
-		pr_notice("ignoring request with wrong generation\n");
-		fw_send_response(card, request, RCODE_TYPE_ERROR);
-		return;
-	}
-
-	if (source != agent->login->sess->node_id) {
-		pr_notice("ignoring request from foreign node (%x != %x)\n",
-				source, agent->login->sess->node_id);
-		fw_send_response(card, request, RCODE_TYPE_ERROR);
-		return;
-	}
-
 	if (offset == 0x00 && length == 4) {
 		/* AGENT_STATE */
-		rcode = tgt_agent_rw_agent_state(card, tcode,
-				generation, data, agent);
+		rcode = tgt_agent_rw_agent_state(card, tcode, data, agent);
 	} else if (offset == 0x04 && length == 4) {
 		/* AGENT_RESET */
-		rcode = tgt_agent_rw_agent_reset(card, tcode,
-				generation, data, agent);
+		rcode = tgt_agent_rw_agent_reset(card, tcode, data, agent);
 	} else if (offset == 0x08 && length == 8) {
 		/* ORB_POINTER */
-		rcode = tgt_agent_rw_orb_pointer(card, tcode,
-				generation, data, agent);
+		rcode = tgt_agent_rw_orb_pointer(card, tcode, data, agent);
 	} else if (offset == 0x10 && length == 4) {
 		/* DOORBELL */
-		rcode = tgt_agent_rw_doorbell(card, tcode,
-				generation, data, agent);
+		rcode = tgt_agent_rw_doorbell(card, tcode, data, agent);
 	} else if (offset == 0x14 && length == 4) {
 		/* UNSOLICITED_STATUS_ENABLE */
 		rcode = tgt_agent_rw_unsolicited_status_enable(card, tcode,
-				generation, data, agent);
+				data, agent);
+	} else {
+		rcode = RCODE_ADDRESS_ERROR;
 	}
 
+out:
 	fw_send_response(card, request, rcode);
 }
 
