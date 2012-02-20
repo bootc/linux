@@ -277,7 +277,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		container_of(work, struct sbp_target_agent, work);
 	struct sbp_session *sess = agent->login->sess;
 	struct sbp_target_request *req;
-	int ret;
+	int ret, attempt, delay;
 	bool doorbell = agent->doorbell;
 	u64 next_orb = agent->orb_pointer;
 
@@ -287,7 +287,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 			spin_lock_bh(&agent->lock);
 			agent->state = AGENT_STATE_DEAD;
 			spin_unlock_bh(&agent->lock);
-			break;
+			return;
 		}
 
 		req->login = agent->login;
@@ -299,9 +299,19 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 				req->orb_pointer & 0xfffffffc);
 
 		/* read in the ORB */
-		ret = fw_run_transaction(sess->card, TCODE_READ_BLOCK_REQUEST,
-				sess->node_id, sess->generation, sess->speed,
-				req->orb_pointer, &req->orb, sizeof(req->orb));
+		for (attempt = 1; attempt <= 5; attempt++) {
+			ret = fw_run_transaction(sess->card,
+					TCODE_READ_BLOCK_REQUEST,
+					sess->node_id, sess->generation,
+					sess->speed, req->orb_pointer,
+					&req->orb, sizeof(req->orb));
+			if (ret == RCODE_COMPLETE)
+				break;
+
+			delay = 5 * attempt * attempt;
+			usleep_range(delay, delay * 2);
+		}		
+
 		if (ret != RCODE_COMPLETE) {
 			pr_debug("tgt_orb fetch failed: %x\n", ret);
 			req->status.status |= cpu_to_be32(
@@ -313,13 +323,13 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 					STATUS_BLOCK_LEN(1) |
 					STATUS_BLOCK_SBP_STATUS(
 						SBP_STATUS_UNSPECIFIED_ERROR));
-			sbp_send_status(req);
-			sbp_free_request(req);
-
 			spin_lock_bh(&agent->lock);
 			agent->state = AGENT_STATE_DEAD;
 			spin_unlock_bh(&agent->lock);
-			break;
+
+			sbp_send_status(req);
+			sbp_free_request(req);
+			return;
 		}
 
 		/* check the next_ORB field */
@@ -351,7 +361,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 			agent->state = AGENT_STATE_SUSPENDED;
 
 		spin_unlock_bh(&agent->lock);
-	} while (next_orb);
+	};
 }
 
 struct sbp_target_agent *sbp_target_agent_register(
