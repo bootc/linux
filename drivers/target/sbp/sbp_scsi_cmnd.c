@@ -37,6 +37,184 @@
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
 
+struct sbp_txn_worker;
+
+struct sbp_txn_info {
+	int max_payload;
+	int pg_size;
+
+	struct fw_card *card;
+	int tcode;
+	int node_id;
+	int generation;
+	int speed;
+
+	struct sbp_txn_worker *workers;
+	int num_workers;
+
+	struct mutex mutex;		/* protects members below */
+	int running_workers;
+	unsigned long long offset;
+	void *payload;
+	size_t length;
+	unsigned int scale_back : 1;
+};
+
+struct sbp_txn_worker {
+	struct sbp_txn_info *txn;
+	struct work_struct work;
+	int rcode;
+};
+
+static void sbp_txn_worker(struct work_struct *work)
+{
+	struct sbp_txn_worker *worker =
+		container_of(work, struct sbp_txn_worker, work);
+	struct sbp_txn_info *txn = worker->txn;
+	unsigned long long offset;
+	void *payload;
+	size_t length;
+	int attempt, delay;
+
+	while (1) {
+		mutex_lock(&txn->mutex);
+
+		if (!txn->length)
+			goto out_locked;
+
+		if (txn->scale_back) {
+			txn->scale_back = 0;
+			goto out_locked;
+		}
+
+		offset = txn->offset;
+		payload = txn->payload;
+		length = txn->length;
+
+		if (length > txn->max_payload)
+			length = txn->max_payload;
+
+		/* FIXME: take page_size into account */
+
+		txn->length -= length;
+		txn->offset += length;
+		txn->payload += length;
+
+		mutex_unlock(&txn->mutex);
+
+		pr_debug("worker txn: 0x%p to 0x%08llx len 0x%x\n",
+			payload, offset, (u32)length);
+
+		for (attempt = 1; attempt <= 5; attempt++) {
+			worker->rcode = fw_run_transaction(txn->card,
+					txn->tcode, txn->node_id,
+					txn->generation, txn->speed,
+					offset, payload, length);
+
+			if (worker->rcode == RCODE_COMPLETE)
+				break;
+
+			if (worker->rcode == RCODE_BUSY) {
+				mutex_lock(&txn->mutex);
+				if (txn->running_workers > 1)
+					txn->scale_back = 1;
+				mutex_unlock(&txn->mutex);
+			}
+
+			delay = 5 * attempt * attempt;
+			usleep_range(delay, delay * 2);
+		}
+
+		if (worker->rcode != RCODE_COMPLETE)
+			goto out;
+	}
+
+out:
+	mutex_lock(&txn->mutex);
+out_locked:
+	txn->running_workers--;
+	mutex_unlock(&txn->mutex);
+	
+}
+
+static struct sbp_txn_info *sbp_transaction_submit(
+		struct sbp_target_request *req, int tcode,
+		unsigned long long offset, void *payload, size_t length)
+{
+	struct sbp_txn_info *info;
+	struct sbp_login_descriptor *login = req->login;
+	struct sbp_session *sess = login->sess;
+	int num_workers, i;
+	struct sbp_txn_worker *workers;
+
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
+	if (!info)
+		return ERR_PTR(-ENOMEM);
+
+	info->max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(
+			be32_to_cpu(req->orb.misc));
+
+	num_workers = min_t(int, DIV_ROUND_UP(length, info->max_payload), 4);
+	pr_debug("starting %d workers\n", num_workers);
+
+	workers = kcalloc(num_workers, sizeof(*workers), GFP_KERNEL);
+	if (!workers) {
+		kfree(info);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	info->pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
+	if (info->pg_size) {
+		pr_err("sbp_run_transaction: page size ignored\n");
+		info->pg_size = 0x100 << info->pg_size;
+	}
+
+	info->card = sess->card;
+	info->tcode = tcode;
+	info->node_id = sess->node_id;
+	info->generation = sess->generation;
+	info->speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
+
+	info->workers = workers;
+	info->num_workers = num_workers;
+
+	mutex_init(&info->mutex);
+	info->running_workers = num_workers;
+	info->offset = offset;
+	info->payload = payload;
+	info->length = length;
+	info->scale_back = 0;
+
+	for (i = 0; i < num_workers; i++) {
+		workers[i].txn = info;
+		INIT_WORK(&workers[i].work, sbp_txn_worker);
+		queue_work(system_unbound_wq, &workers[i].work);
+	}
+
+	return info;
+}
+
+static int sbp_transaction_waitcomplete(struct sbp_txn_info *txn)
+{
+	int i, ret = 0;
+
+	for (i = 0; i < txn->num_workers; i++) {
+		flush_work_sync(&txn->workers[i].work);
+		pr_debug("worker complete: 0x%x\n", txn->workers[i].rcode);
+		if (txn->workers[i].rcode != RCODE_COMPLETE)
+			ret = -EIO;
+	}
+
+	WARN_ON(txn->running_workers != 0);
+	WARN_ON(ret == 0 && txn->length != 0);
+
+	mutex_destroy(&txn->mutex);
+	kfree(txn->workers);
+	kfree(txn);
+
+	return ret;
+}
+
 /*
  * Wraps fw_run_transaction taking into account page size and max payload, and
  * retries the transaction if it fails
@@ -44,39 +222,13 @@
 static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
 	unsigned long long offset, void *payload, size_t length)
 {
-	struct sbp_login_descriptor *login = req->login;
-	struct sbp_session *sess = login->sess;
-	int ret, speed, max_payload, pg_size, seg_off = 0, seg_len;
+	struct sbp_txn_info *info;
 
-	speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
-	max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(be32_to_cpu(req->orb.misc));
-	pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
+	info = sbp_transaction_submit(req, tcode, offset, payload, length);
+	if (IS_ERR(info))
+		return PTR_ERR(info);
 
-	if (pg_size) {
-		pr_err("sbp_run_transaction: page size ignored\n");
-		pg_size = 0x100 << pg_size;
-	}
-
-	while (seg_off < length) {
-		seg_len = length - seg_off;
-		if (seg_len > max_payload)
-			seg_len = max_payload;
-
-		/* FIXME: take page_size into account */
-
-		/* FIXME: retry failed data transfers */
-		ret = fw_run_transaction(sess->card, tcode,
-				sess->node_id, sess->generation, speed,
-				offset + seg_off, payload + seg_off, seg_len);
-		if (ret != RCODE_COMPLETE) {
-			pr_debug("sbp_run_transaction: txn failed: %x\n", ret);
-			return -EIO;
-		}
-
-		seg_off += seg_len;
-	}
-
-	return 0;
+	return sbp_transaction_waitcomplete(info);
 }
 
 static int sbp_fetch_command(struct sbp_target_request *req)
