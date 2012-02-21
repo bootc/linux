@@ -33,6 +33,7 @@
 #include "sbp_management_agent.h"
 #include "sbp_login.h"
 #include "sbp_target_agent.h"
+#include "sbp_scsi_cmnd.h"
 
 #define SESSION_MAINTENANCE_INTERVAL HZ
 
@@ -45,14 +46,14 @@ static int read_peer_guid(u64 *guid, const struct sbp_management_request *req)
 	int ret;
 	__be32 high, low;
 
-	ret = fw_run_transaction(req->card, TCODE_READ_QUADLET_REQUEST,
+	ret = sbp_run_transaction(req->card, TCODE_READ_QUADLET_REQUEST,
 			req->node_addr, req->generation, req->speed,
 			(CSR_REGISTER_BASE | CSR_CONFIG_ROM) + 3 * 4,
 			&high, sizeof(high));
 	if (ret != RCODE_COMPLETE)
 		return ret;
 
-	ret = fw_run_transaction(req->card, TCODE_READ_QUADLET_REQUEST,
+	ret = sbp_run_transaction(req->card, TCODE_READ_QUADLET_REQUEST,
 			req->node_addr, req->generation, req->speed,
 			(CSR_REGISTER_BASE | CSR_CONFIG_ROM) + 4 * 4,
 			&low, sizeof(low));
@@ -450,7 +451,7 @@ already_logged_in:
 	addr_to_sbp2_pointer(login->tgt_agt->handler.offset,
 		&response->command_block_agent);
 
-	ret = fw_run_transaction(sess->card, TCODE_WRITE_BLOCK_REQUEST,
+	ret = sbp_run_transaction(sess->card, TCODE_WRITE_BLOCK_REQUEST,
 		sess->node_id, sess->generation, sess->speed,
 		sbp2_pointer_to_addr(&req->orb.ptr2), response,
 		login_response_len);

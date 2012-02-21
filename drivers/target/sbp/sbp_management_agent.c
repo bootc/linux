@@ -30,6 +30,7 @@
 #include "sbp_base.h"
 #include "sbp_management_agent.h"
 #include "sbp_login.h"
+#include "sbp_scsi_cmnd.h"
 
 static void sbp_mgt_agent_process(struct work_struct *work)
 {
@@ -40,7 +41,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 	int status_data_len = 0;
 
 	/* fetch the ORB from the initiator */
-	ret = fw_run_transaction(req->card, TCODE_READ_BLOCK_REQUEST,
+	ret = sbp_run_transaction(req->card, TCODE_READ_BLOCK_REQUEST,
 		req->node_addr, req->generation, req->speed,
 		agent->orb_offset, &req->orb, sizeof(req->orb));
 	if (ret != RCODE_COMPLETE) {
@@ -141,7 +142,7 @@ static void sbp_mgt_agent_process(struct work_struct *work)
 	req->status.orb_low = cpu_to_be32(agent->orb_offset);
 
 	/* write the status block back to the initiator */
-	ret = fw_run_transaction(req->card, TCODE_WRITE_BLOCK_REQUEST,
+	ret = sbp_run_transaction(req->card, TCODE_WRITE_BLOCK_REQUEST,
 		req->node_addr, req->generation, req->speed,
 		sbp2_pointer_to_addr(&req->orb.status_fifo),
 		&req->status, 8 + status_data_len);

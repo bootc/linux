@@ -37,180 +37,94 @@
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
 
-struct sbp_txn_worker;
+struct sbp_rw_data_worker;
 
-struct sbp_txn_info {
+struct sbp_rw_data_txn {
 	int max_payload;
 	int pg_size;
 
 	struct fw_card *card;
-	int tcode;
 	int node_id;
 	int generation;
+	int tcode;
 	int speed;
 
-	struct sbp_txn_worker *workers;
+
+	struct sbp_rw_data_worker *workers;
 	int num_workers;
 
 	struct mutex mutex;		/* protects members below */
 	int running_workers;
+	unsigned int scale_back : 1;
+
+	struct sbp_page_table_entry *pg_tbl;
+	int num_pte;
+
 	unsigned long long offset;
 	void *payload;
-	size_t length;
-	unsigned int scale_back : 1;
+	int length;
 };
 
-struct sbp_txn_worker {
-	struct sbp_txn_info *txn;
+struct sbp_rw_data_worker {
+	struct sbp_rw_data_txn *txn;
 	struct work_struct work;
 	int rcode;
 };
 
-static void sbp_txn_worker(struct work_struct *work)
+/*
+ * Simple wrapper around fw_run_transaction that retries the transaction several
+ * times in case of failure, with an exponential backoff.
+ */
+int sbp_run_transaction(struct fw_card *card, int tcode, int destination_id,
+		int generation, int speed, unsigned long long offset,
+		void *payload, size_t length)
 {
-	struct sbp_txn_worker *worker =
-		container_of(work, struct sbp_txn_worker, work);
-	struct sbp_txn_info *txn = worker->txn;
-	unsigned long long offset;
-	void *payload;
-	size_t length;
-	int attempt, delay;
+	int attempt, ret, delay;
 
-	while (1) {
-		mutex_lock(&txn->mutex);
+	for (attempt = 1; attempt <= 5; attempt++) {
+		ret = fw_run_transaction(card, tcode, destination_id,
+				generation, speed, offset, payload, length);
 
-		if (!txn->length)
-			goto out_locked;
+		switch (ret) {
+		case RCODE_COMPLETE:
+		case RCODE_TYPE_ERROR:
+		case RCODE_ADDRESS_ERROR:
+		case RCODE_GENERATION:
+			return ret;
 
-		if (txn->scale_back) {
-			txn->scale_back = 0;
-			goto out_locked;
-		}
-
-		offset = txn->offset;
-		payload = txn->payload;
-		length = txn->length;
-
-		if (length > txn->max_payload)
-			length = txn->max_payload;
-
-		/* FIXME: take page_size into account */
-
-		txn->length -= length;
-		txn->offset += length;
-		txn->payload += length;
-
-		mutex_unlock(&txn->mutex);
-
-		pr_debug("worker txn: 0x%p to 0x%08llx len 0x%x\n",
-			payload, offset, (u32)length);
-
-		for (attempt = 1; attempt <= 5; attempt++) {
-			worker->rcode = fw_run_transaction(txn->card,
-					txn->tcode, txn->node_id,
-					txn->generation, txn->speed,
-					offset, payload, length);
-
-			if (worker->rcode == RCODE_COMPLETE)
-				break;
-
-			if (worker->rcode == RCODE_BUSY) {
-				mutex_lock(&txn->mutex);
-				if (txn->running_workers > 1)
-					txn->scale_back = 1;
-				mutex_unlock(&txn->mutex);
-			}
-
+		default:
 			delay = 5 * attempt * attempt;
 			usleep_range(delay, delay * 2);
 		}
-
-		if (worker->rcode != RCODE_COMPLETE)
-			goto out;
 	}
 
-out:
-	mutex_lock(&txn->mutex);
-out_locked:
-	txn->running_workers--;
-	mutex_unlock(&txn->mutex);
-	
+	return ret;
 }
 
-static struct sbp_txn_info *sbp_transaction_submit(
-		struct sbp_target_request *req, int tcode,
-		unsigned long long offset, void *payload, size_t length)
+/*
+ * Wrapper around sbp_run_transaction that gets the card, destination,
+ * generation and speed out of the request's session.
+ */
+static int sbp_run_request_transaction(struct sbp_target_request *req,
+		int tcode, unsigned long long offset, void *payload,
+		size_t length)
 {
-	struct sbp_txn_info *info;
 	struct sbp_login_descriptor *login = req->login;
 	struct sbp_session *sess = login->sess;
-	int num_workers, i;
-	struct sbp_txn_worker *workers;
+	struct fw_card *card;
+	int node_id, generation, speed, ret;
 
-	info = kmalloc(sizeof(*info), GFP_KERNEL);
-	if (!info)
-		return ERR_PTR(-ENOMEM);
+	spin_lock_bh(&sess->lock);
+	card = fw_card_get(sess->card);
+	node_id = sess->node_id;
+	generation = sess->generation;
+	speed = sess->speed;
+	spin_unlock_bh(&sess->lock);
 
-	info->max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(
-			be32_to_cpu(req->orb.misc));
+	ret = sbp_run_transaction(card, tcode, node_id, generation, speed,
+			offset, payload, length);
 
-	num_workers = min_t(int, DIV_ROUND_UP(length, info->max_payload), 4);
-	pr_debug("starting %d workers\n", num_workers);
-
-	workers = kcalloc(num_workers, sizeof(*workers), GFP_KERNEL);
-	if (!workers) {
-		kfree(info);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	info->pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
-	if (info->pg_size) {
-		pr_err("sbp_run_transaction: page size ignored\n");
-		info->pg_size = 0x100 << info->pg_size;
-	}
-
-	info->card = sess->card;
-	info->tcode = tcode;
-	info->node_id = sess->node_id;
-	info->generation = sess->generation;
-	info->speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
-
-	info->workers = workers;
-	info->num_workers = num_workers;
-
-	mutex_init(&info->mutex);
-	info->running_workers = num_workers;
-	info->offset = offset;
-	info->payload = payload;
-	info->length = length;
-	info->scale_back = 0;
-
-	for (i = 0; i < num_workers; i++) {
-		workers[i].txn = info;
-		INIT_WORK(&workers[i].work, sbp_txn_worker);
-		queue_work(system_unbound_wq, &workers[i].work);
-	}
-
-	return info;
-}
-
-static int sbp_transaction_waitcomplete(struct sbp_txn_info *txn)
-{
-	int i, ret = 0;
-
-	for (i = 0; i < txn->num_workers; i++) {
-		flush_work_sync(&txn->workers[i].work);
-		pr_debug("worker complete: 0x%x\n", txn->workers[i].rcode);
-		if (txn->workers[i].rcode != RCODE_COMPLETE)
-			ret = -EIO;
-	}
-
-	WARN_ON(txn->running_workers != 0);
-	WARN_ON(ret == 0 && txn->length != 0);
-
-	mutex_destroy(&txn->mutex);
-	kfree(txn->workers);
-	kfree(txn);
+	fw_card_put(card);
 
 	return ret;
 }
@@ -218,9 +132,8 @@ static int sbp_transaction_waitcomplete(struct sbp_txn_info *txn)
 /*
  * Wraps fw_run_transaction taking into account page size and max payload, and
  * retries the transaction if it fails
- */
 static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
-	unsigned long long offset, void *payload, size_t length)
+		unsigned long long offset, void *payload, size_t length)
 {
 	struct sbp_txn_info *info;
 
@@ -230,6 +143,7 @@ static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
 
 	return sbp_transaction_waitcomplete(info);
 }
+*/
 
 static int sbp_fetch_command(struct sbp_target_request *req)
 {
@@ -248,12 +162,13 @@ static int sbp_fetch_command(struct sbp_target_request *req)
 		pr_debug("sbp_fetch_command: filling in long command\n");
 		copy_len = cmd_len - sizeof(req->orb.command_block);
 
-		ret = sbp_run_transaction(req, TCODE_READ_BLOCK_REQUEST,
-			req->orb_pointer + sizeof(req->orb),
-			req->cmd_buf + sizeof(req->orb.command_block),
-			copy_len);
-		if (ret)
-			return ret;
+		ret = sbp_run_request_transaction(req,
+				TCODE_READ_BLOCK_REQUEST,
+				req->orb_pointer + sizeof(req->orb),
+				req->cmd_buf + sizeof(req->orb.command_block),
+				copy_len);
+		if (ret != RCODE_COMPLETE)
+			return -EIO;
 	}
 
 	return 0;
@@ -274,12 +189,12 @@ static int sbp_fetch_page_table(struct sbp_target_request *req)
 	if (!pg_tbl)
 		return -ENOMEM;
 
-	ret = sbp_run_transaction(req, TCODE_READ_BLOCK_REQUEST,
-		sbp2_pointer_to_addr(&req->orb.data_descriptor),
-		pg_tbl, pg_tbl_sz);
-	if (ret) {
+	ret = sbp_run_request_transaction(req, TCODE_READ_BLOCK_REQUEST,
+			sbp2_pointer_to_addr(&req->orb.data_descriptor),
+			pg_tbl, pg_tbl_sz);
+	if (ret != RCODE_COMPLETE) {
 		kfree(pg_tbl);
-		return ret;
+		return -EIO;
 	}
 
 	req->pg_tbl = pg_tbl;
@@ -354,47 +269,231 @@ void sbp_handle_command(struct sbp_target_request *req)
 	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d data_dir:%d\n",
 			unpacked_lun, data_length, data_dir);
 
+	/* pre-fetch data to write */
+	if (data_dir == DMA_TO_DEVICE) {
+		req->data_buf = kmalloc(data_length, GFP_KERNEL);
+		if (!req->data_buf) {
+			req->status.status |= cpu_to_be32(
+					STATUS_BLOCK_RESP(
+						STATUS_RESP_REQUEST_COMPLETE) |
+					STATUS_BLOCK_DEAD(0) |
+					STATUS_BLOCK_LEN(1) |
+					STATUS_BLOCK_SBP_STATUS(
+						SBP_STATUS_RESOURCES_UNAVAIL));
+			sbp_send_status(req);
+			sbp_free_request(req);
+			return;
+		}
+
+		req->se_cmd.data_direction = data_dir;
+		req->se_cmd.data_length = data_length;
+
+		ret = sbp_rw_data(req, false);
+		if (ret) {
+			req->status.status |= cpu_to_be32(
+					STATUS_BLOCK_RESP(
+						STATUS_RESP_TRANSPORT_FAILURE) |
+					STATUS_BLOCK_DEAD(0) |
+					STATUS_BLOCK_LEN(1) |
+					STATUS_BLOCK_SBP_STATUS(
+						SBP_STATUS_UNSPECIFIED_ERROR));
+			sbp_send_status(req);
+			sbp_free_request(req);
+			return;
+		}
+	}
+
 	target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
 			req->sense_buf, unpacked_lun, data_length,
 			MSG_SIMPLE_TAG, data_dir, 0);
+}
+
+/* txn->mutex must already be held */
+static inline bool sbp_rw_data_continue(struct sbp_rw_data_txn *txn)
+{
+	struct sbp_page_table_entry *pte;
+
+	if (txn->scale_back) {
+		txn->scale_back = 0;
+		return false;
+	}
+
+	if (txn->length)
+		return true;
+
+	if (!txn->num_pte)
+		return false;
+
+	pte = txn->pg_tbl;
+	txn->offset = (u64)be16_to_cpu(pte->segment_base_hi) << 32 |
+		be32_to_cpu(pte->segment_base_lo);
+	txn->length = be16_to_cpu(pte->segment_length);
+
+	txn->pg_tbl++;
+	txn->num_pte--;
+
+	return true;
+}
+
+static void sbp_rw_data_worker(struct work_struct *work)
+{
+	struct sbp_rw_data_worker *worker =
+		container_of(work, struct sbp_rw_data_worker, work);
+	struct sbp_rw_data_txn *txn = worker->txn;
+	unsigned long long offset;
+	void *payload;
+	int length, attempt, delay;
+
+	mutex_lock(&txn->mutex);
+	while (sbp_rw_data_continue(txn)) {
+		offset = txn->offset;
+		payload = txn->payload;
+		length = txn->length;
+
+		if (length > txn->max_payload)
+			length = txn->max_payload;
+
+		/* FIXME: take page_size into account */
+
+		txn->length -= length;
+		txn->offset += length;
+		txn->payload += length;
+
+		mutex_unlock(&txn->mutex);
+
+		pr_debug("worker txn: 0x%p to 0x%08llx len 0x%x\n",
+			payload, offset, length);
+
+		for (attempt = 1; attempt <= 5; attempt++) {
+			worker->rcode = fw_run_transaction(txn->card,
+					txn->tcode, txn->node_id,
+					txn->generation, txn->speed,
+					offset, payload, length);
+
+			if (worker->rcode == RCODE_COMPLETE)
+				break;
+
+			if (worker->rcode == RCODE_BUSY) {
+				mutex_lock(&txn->mutex);
+				if (txn->running_workers > 1)
+					txn->scale_back = 1;
+				mutex_unlock(&txn->mutex);
+			}
+
+			delay = 5 * attempt * attempt;
+			usleep_range(delay, delay * 2);
+		}
+
+		mutex_lock(&txn->mutex);
+
+		if (worker->rcode != RCODE_COMPLETE)
+			break;
+	}
+
+	txn->running_workers--;
+	mutex_unlock(&txn->mutex);
 }
 
 /*
  * DMA_TO_DEVICE = read from initiator (SCSI WRITE)
  * DMA_FROM_DEVICE = write to initiator (SCSI READ)
  */
-int sbp_rw_data(struct sbp_target_request *req)
+int sbp_rw_data(struct sbp_target_request *req, bool sync)
 {
-	int ret, tcode;
+	struct sbp_session *sess = req->login->sess;
+	int tcode, num_workers, i;
+	struct sbp_rw_data_txn *txn;
+	struct sbp_rw_data_worker *workers;
 
 	tcode = (req->se_cmd.data_direction == DMA_TO_DEVICE) ?
 		TCODE_READ_BLOCK_REQUEST :
 		TCODE_WRITE_BLOCK_REQUEST;
 
-	if (req->pg_tbl) {
-		int idx, offset = 0, data_size;
+	txn = kmalloc(sizeof(*txn), GFP_KERNEL);
+	if (!txn)
+		return -ENOMEM;
 
-		data_size = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
+	txn->max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(
+			be32_to_cpu(req->orb.misc));
 
-		for (idx = 0; idx < data_size; idx++) {
-			struct sbp_page_table_entry *pte = &req->pg_tbl[idx];
-			int pte_len = be16_to_cpu(pte->segment_length);
-			u64 pte_offset =
-				(u64)be16_to_cpu(pte->segment_base_hi) << 32 |
-				be32_to_cpu(pte->segment_base_lo);
+	num_workers = min_t(int, 4, DIV_ROUND_UP(req->se_cmd.data_length,
+				txn->max_payload));
+	pr_debug("starting %d workers\n", num_workers);
 
-			ret = sbp_run_transaction(req, tcode, pte_offset,
-					req->data_buf + offset, pte_len);
-			if (ret)
-				break;
-
-			offset += pte_len;
-		}
-	} else {
-		ret = sbp_run_transaction(req, tcode,
-				sbp2_pointer_to_addr(&req->orb.data_descriptor),
-				req->data_buf, req->se_cmd.data_length);
+	workers = kcalloc(num_workers, sizeof(*workers), GFP_KERNEL);
+	if (!workers) {
+		kfree(txn);
+		return -ENOMEM;
 	}
+
+	txn->pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
+	if (txn->pg_size) {
+		pr_err("sbp_run_transaction: page size ignored\n");
+		txn->pg_size = 0x100 << txn->pg_size;
+	}
+
+	spin_lock_bh(&sess->lock);
+	txn->card = fw_card_get(sess->card);
+	txn->node_id = sess->node_id;
+	txn->generation = sess->generation;
+	spin_unlock_bh(&sess->lock);
+
+	txn->tcode = tcode;
+	txn->speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
+
+	if (req->pg_tbl) {
+		txn->pg_tbl = req->pg_tbl;
+		txn->num_pte = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
+
+		txn->offset = 0;
+		txn->length = 0;
+	} else {
+		txn->pg_tbl = NULL;
+		txn->num_pte = 0;
+
+		txn->offset = sbp2_pointer_to_addr(&req->orb.data_descriptor);
+		txn->length = req->se_cmd.data_length;
+	}
+
+	txn->workers = workers;
+	txn->num_workers = num_workers;
+
+	mutex_init(&txn->mutex);
+	txn->running_workers = num_workers;
+	txn->scale_back = 0;
+
+	txn->payload = req->data_buf;
+
+	for (i = 0; i < num_workers; i++) {
+		workers[i].txn = txn;
+		INIT_WORK(&workers[i].work, sbp_rw_data_worker);
+		queue_work(system_unbound_wq, &workers[i].work);
+	}
+
+	req->rw_txn = txn;
+
+	return sync ? sbp_rw_data_waitcomplete(req) : 0;
+}
+
+int sbp_rw_data_waitcomplete(struct sbp_target_request *req)
+{
+	struct sbp_rw_data_txn *txn = req->rw_txn;
+	int i, ret = 0;
+
+	for (i = 0; i < txn->num_workers; i++) {
+		flush_work_sync(&txn->workers[i].work);
+		pr_debug("worker complete: 0x%x\n", txn->workers[i].rcode);
+		if (txn->workers[i].rcode != RCODE_COMPLETE)
+			ret = -EIO;
+	}
+
+	WARN_ON(txn->running_workers != 0);
+	WARN_ON(ret == 0 && txn->length != 0);
+
+	fw_card_put(txn->card);
+	mutex_destroy(&txn->mutex);
+	kfree(txn->workers);
+	kfree(txn);
 
 	return ret;
 }
@@ -406,11 +505,11 @@ int sbp_send_status(struct sbp_target_request *req)
 
 	length = (((be32_to_cpu(req->status.status) >> 24) & 0x07) + 1) * 4;
 
-	ret = sbp_run_transaction(req, TCODE_WRITE_BLOCK_REQUEST,
+	ret = sbp_run_request_transaction(req, TCODE_WRITE_BLOCK_REQUEST,
 			login->status_fifo_addr, &req->status, length);
-	if (ret) {
-		pr_debug("sbp_send_status: write failed: %d\n", ret);
-		return ret;
+	if (ret != RCODE_COMPLETE) {
+		pr_debug("sbp_send_status: write failed: 0x%x\n", ret);
+		return -EIO;
 	}
 
 	pr_debug("sbp_send_status: status write complete for ORB: 0x%llx\n",

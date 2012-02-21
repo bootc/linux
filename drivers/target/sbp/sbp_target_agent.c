@@ -277,7 +277,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 		container_of(work, struct sbp_target_agent, work);
 	struct sbp_session *sess = agent->login->sess;
 	struct sbp_target_request *req;
-	int ret, attempt, delay;
+	int ret;
 	bool doorbell = agent->doorbell;
 	u64 next_orb = agent->orb_pointer;
 
@@ -299,19 +299,9 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 				req->orb_pointer & 0xfffffffc);
 
 		/* read in the ORB */
-		for (attempt = 1; attempt <= 5; attempt++) {
-			ret = fw_run_transaction(sess->card,
-					TCODE_READ_BLOCK_REQUEST,
-					sess->node_id, sess->generation,
-					sess->speed, req->orb_pointer,
-					&req->orb, sizeof(req->orb));
-			if (ret == RCODE_COMPLETE)
-				break;
-
-			delay = 5 * attempt * attempt;
-			usleep_range(delay, delay * 2);
-		}		
-
+		ret = sbp_run_transaction(sess->card, TCODE_READ_BLOCK_REQUEST,
+				sess->node_id, sess->generation, sess->speed,
+				req->orb_pointer, &req->orb, sizeof(req->orb));
 		if (ret != RCODE_COMPLETE) {
 			pr_debug("tgt_orb fetch failed: %x\n", ret);
 			req->status.status |= cpu_to_be32(
