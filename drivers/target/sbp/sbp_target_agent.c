@@ -97,7 +97,7 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card, int tcode, void *data,
 		pr_debug("tgt_agent ORB_POINTER write: 0x%llx\n",
 				agent->orb_pointer);
 
-		queue_work(sbp_workqueue, &agent->work);
+		queue_work(system_unbound_wq, &agent->work);
 
 		return RCODE_COMPLETE;
 
@@ -130,7 +130,7 @@ static int tgt_agent_rw_doorbell(struct fw_card *card, int tcode, void *data,
 
 		pr_debug("tgt_agent DOORBELL\n");
 
-		queue_work(sbp_workqueue, &agent->work);
+		queue_work(system_unbound_wq, &agent->work);
 
 		return RCODE_COMPLETE;
 
@@ -335,7 +335,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 
 		if (tgt_agent_check_active(agent) && !doorbell) {
 			INIT_WORK(&req->work, tgt_agent_process_work);
-			queue_work(sbp_workqueue, &req->work);
+			queue_work(system_unbound_wq, &req->work);
 		} else {
 			/* don't process this request, just check next_ORB */
 			sbp_free_request(req);

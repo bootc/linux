@@ -204,7 +204,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
 
-		queue_work(sbp_workqueue, &agent->work);
+		queue_work(system_unbound_wq, &agent->work);
 		rcode = RCODE_COMPLETE;
 	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
 		addr_to_sbp2_pointer(agent->orb_offset, ptr);

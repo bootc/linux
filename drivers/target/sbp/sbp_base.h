@@ -195,7 +195,6 @@ struct sbp_tport {
 
 extern struct target_fabric_configfs *sbp_fabric_configfs;
 extern const struct fw_address_region sbp_register_region;
-extern struct workqueue_struct *sbp_workqueue;
 
 static inline u64 sbp2_pointer_to_addr(const struct sbp2_pointer *ptr)
 {

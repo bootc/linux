@@ -383,8 +383,8 @@ void sbp_management_request_login(
 		sess->generation = req->generation;
 		sess->speed = req->speed;
 
-		queue_delayed_work(sbp_workqueue, &sess->maint_work,
-			SESSION_MAINTENANCE_INTERVAL);
+		schedule_delayed_work(&sess->maint_work,
+				SESSION_MAINTENANCE_INTERVAL);
 	}
 
 	/* only take the latest reconnect_hold into account */
@@ -604,7 +604,7 @@ static void session_check_for_reset(struct sbp_session *sess)
 
 	if (!card_valid || (sess->generation != sess->card->generation)) {
 		pr_info("Waiting for reconnect from node: %016llx\n",
-			sess->guid);
+				sess->guid);
 
 		sess->node_id = -1;
 		sess->reconnect_expires = get_jiffies_64() +
@@ -631,7 +631,7 @@ static void session_reconnect_expired(struct sbp_session *sess)
 static void session_maintenance_work(struct work_struct *work)
 {
 	struct sbp_session *sess = container_of(work, struct sbp_session,
-		maint_work.work);
+			maint_work.work);
 
 	/* could be called while tearing down the session */
 	spin_lock_bh(&sess->lock);
@@ -645,12 +645,12 @@ static void session_maintenance_work(struct work_struct *work)
 		/* check for bus reset and make node_id invalid */
 		session_check_for_reset(sess);
 
-		queue_delayed_work(sbp_workqueue, &sess->maint_work,
-			SESSION_MAINTENANCE_INTERVAL);
+		schedule_delayed_work(&sess->maint_work,
+				SESSION_MAINTENANCE_INTERVAL);
 	} else if (!time_after64(get_jiffies_64(), sess->reconnect_expires)) {
 		/* still waiting for reconnect */
-		queue_delayed_work(sbp_workqueue, &sess->maint_work,
-			SESSION_MAINTENANCE_INTERVAL);
+		schedule_delayed_work(&sess->maint_work,
+				SESSION_MAINTENANCE_INTERVAL);
 	} else {
 		/* reconnect timeout has expired */
 		session_reconnect_expired(sess);
