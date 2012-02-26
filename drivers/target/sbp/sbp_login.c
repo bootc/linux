@@ -245,12 +245,16 @@ static void sbp_login_release(struct sbp_login_descriptor *login,
 
 	/* FIXME: abort/wait on tasks */
 
-	spin_lock_bh(&sess->lock);
-	list_del(&login->link);
-	spin_unlock_bh(&sess->lock);
-
 	sbp_target_agent_unregister(login->tgt_agt);
-	sbp_session_release(sess, cancel_work);
+
+	if (sess) {
+		spin_lock_bh(&sess->lock);
+		list_del(&login->link);
+		spin_unlock_bh(&sess->lock);
+
+		sbp_session_release(sess, cancel_work);
+	}
+
 	kfree(login);
 }
 
@@ -617,15 +621,24 @@ static void session_check_for_reset(struct sbp_session *sess)
 static void session_reconnect_expired(struct sbp_session *sess)
 {
 	struct sbp_login_descriptor *login, *temp;
+	LIST_HEAD(login_list);
 
 	pr_info("Reconnect timer expired for node: %016llx\n", sess->guid);
 
 	spin_lock_bh(&sess->lock);
-	list_for_each_entry_safe(login, temp, &sess->login_list, link)
-		sbp_login_release(login, false);
+	list_for_each_entry_safe(login, temp, &sess->login_list, link) {
+		login->sess = NULL;
+		list_del(&login->link);
+		list_add_tail(&login->link, &login_list);
+	}
 	spin_unlock_bh(&sess->lock);
 
-	/* sbp_login_release() calls sbp_session_release() */
+	list_for_each_entry_safe(login, temp, &login_list, link) {
+		list_del(&login->link);
+		sbp_login_release(login, false);
+	}
+
+	sbp_session_release(sess, false);
 }
 
 static void session_maintenance_work(struct work_struct *work)
