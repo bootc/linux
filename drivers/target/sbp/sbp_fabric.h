@@ -15,9 +15,6 @@ u32 sbp_tpg_get_inst_index(struct se_portal_group *);
 void sbp_release_cmd(struct se_cmd *se_cmd);
 int sbp_shutdown_session(struct se_session *);
 void sbp_close_session(struct se_session *);
-void sbp_stop_session(struct se_session *, int, int);
-void sbp_reset_nexus(struct se_session *);
-int sbp_sess_logged_in(struct se_session *);
 u32 sbp_sess_get_index(struct se_session *);
 int sbp_write_pending(struct se_cmd *);
 int sbp_write_pending_status(struct se_cmd *);
@@ -29,7 +26,6 @@ int sbp_queue_status(struct se_cmd *);
 int sbp_queue_tm_rsp(struct se_cmd *);
 u16 sbp_set_fabric_sense_len(struct se_cmd *, u32);
 u16 sbp_get_fabric_sense_len(void);
-int sbp_is_state_remove(struct se_cmd *);
 int sbp_check_stop_free(struct se_cmd *se_cmd);
 
 u8 sbp_get_fabric_proto_ident(struct se_portal_group *se_tpg);
@@ -42,4 +38,3 @@ u32 sbp_get_pr_transport_id_len(
 char *sbp_parse_pr_out_transport_id(
 		struct se_portal_group *se_tpg, const char *buf,
 		u32 *out_tid_len, char **port_nexus_ptr);
-

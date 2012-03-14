@@ -644,9 +644,6 @@ static struct target_core_fabric_ops sbp_ops = {
 	.release_cmd			= sbp_release_cmd,
 	.shutdown_session		= sbp_shutdown_session,
 	.close_session			= sbp_close_session,
-	.stop_session			= sbp_stop_session,
-	.fall_back_to_erl0		= sbp_reset_nexus,
-	.sess_logged_in			= sbp_sess_logged_in,
 	.sess_get_index			= sbp_sess_get_index,
 	.write_pending			= sbp_write_pending,
 	.write_pending_status		= sbp_write_pending_status,
@@ -658,7 +655,6 @@ static struct target_core_fabric_ops sbp_ops = {
 	.queue_tm_rsp			= sbp_queue_tm_rsp,
 	.get_fabric_sense_len		= sbp_get_fabric_sense_len,
 	.set_fabric_sense_len		= sbp_set_fabric_sense_len,
-	.is_state_remove		= sbp_is_state_remove,
 	.check_stop_free		= sbp_check_stop_free,
 
 	.fabric_make_wwn		= sbp_make_tport,
@@ -739,4 +735,3 @@ MODULE_DESCRIPTION("FireWire SBP fabric driver");
 MODULE_LICENSE("GPL");
 module_init(sbp_init);
 module_exit(sbp_exit);
-

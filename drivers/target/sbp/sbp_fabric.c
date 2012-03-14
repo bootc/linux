@@ -125,22 +125,6 @@ void sbp_close_session(struct se_session *se_sess)
 	return;
 }
 
-void sbp_stop_session(struct se_session *se_sess, int sess_sleep,
-		int conn_sleep)
-{
-	return;
-}
-
-void sbp_reset_nexus(struct se_session *se_sess)
-{
-	return;
-}
-
-int sbp_sess_logged_in(struct se_session *se_sess)
-{
-	return 0;
-}
-
 u32 sbp_sess_get_index(struct se_session *se_sess)
 {
 	return 0;
@@ -254,11 +238,6 @@ u16 sbp_get_fabric_sense_len(void)
 	return 0;
 }
 
-int sbp_is_state_remove(struct se_cmd *se_cmd)
-{
-	return 0;
-}
-
 int sbp_check_stop_free(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
@@ -346,4 +325,3 @@ char *sbp_parse_pr_out_transport_id(
 
 	return (char *)&buf[8];
 }
-

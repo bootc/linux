@@ -416,7 +416,7 @@ int sbp_rw_data(struct sbp_target_request *req, bool sync)
 	txn->max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(
 			be32_to_cpu(req->orb.misc));
 
-	num_workers = min_t(int, 4, DIV_ROUND_UP(req->se_cmd.data_length,
+	num_workers = min_t(int, 3, DIV_ROUND_UP(req->se_cmd.data_length,
 				txn->max_payload));
 	pr_debug("starting %d workers\n", num_workers);
 
