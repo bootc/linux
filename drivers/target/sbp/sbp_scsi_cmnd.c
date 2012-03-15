@@ -49,11 +49,10 @@ struct sbp_rw_data_txn {
 	int tcode;
 	int speed;
 
-
 	struct sbp_rw_data_worker *workers;
 	int num_workers;
 
-	struct mutex mutex;		/* protects members below */
+	struct mutex mutex;		/* protects all members below */
 	int running_workers;
 	unsigned int scale_back : 1;
 
@@ -128,22 +127,6 @@ static int sbp_run_request_transaction(struct sbp_target_request *req,
 
 	return ret;
 }
-
-/*
- * Wraps fw_run_transaction taking into account page size and max payload, and
- * retries the transaction if it fails
-static int sbp_run_transaction(struct sbp_target_request *req, int tcode,
-		unsigned long long offset, void *payload, size_t length)
-{
-	struct sbp_txn_info *info;
-
-	info = sbp_transaction_submit(req, tcode, offset, payload, length);
-	if (IS_ERR(info))
-		return PTR_ERR(info);
-
-	return sbp_transaction_waitcomplete(info);
-}
-*/
 
 static int sbp_fetch_command(struct sbp_target_request *req)
 {
@@ -467,7 +450,7 @@ int sbp_rw_data(struct sbp_target_request *req, bool sync)
 	for (i = 0; i < num_workers; i++) {
 		workers[i].txn = txn;
 		INIT_WORK(&workers[i].work, sbp_rw_data_worker);
-		queue_work(system_unbound_wq, &workers[i].work);
+		queue_work(system_wq, &workers[i].work);
 	}
 
 	req->rw_txn = txn;
