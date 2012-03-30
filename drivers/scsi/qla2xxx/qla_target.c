@@ -3224,8 +3224,8 @@ restart:
 		}
 		se_cmd = &cmd->se_cmd;
 
-		cmd->sg_cnt = se_cmd->t_tasks_sg_chained_no;
-		cmd->sg = se_cmd->t_tasks_sg_chained;
+		cmd->sg_cnt = se_cmd->t_data_nents;
+		cmd->sg = se_cmd->t_data_sg;
 
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xe131,  "SRR cmd %p (se_cmd %p, tag %d, op %x), "
 			"sg_cnt=%d, offset=%d", cmd, &cmd->se_cmd,

@@ -517,13 +517,8 @@ int tcm_qla2xxx_write_pending(struct se_cmd *se_cmd)
 
 	cmd->bufflen = se_cmd->data_length;
 	cmd->dma_data_direction = tcm_qla2xxx_mapping_dir(se_cmd);
-
-	/*
-	 * Setup the struct se_task->task_sg[] chained SG list
-	 */
-	transport_do_task_sg_chain(se_cmd);
-	cmd->sg_cnt = se_cmd->t_tasks_sg_chained_no;
-	cmd->sg = se_cmd->t_tasks_sg_chained;
+	cmd->sg_cnt = se_cmd->t_data_nents;
+	cmd->sg = se_cmd->t_data_sg;
 
 	/*
 	 * qla_target.c:qla_tgt_rdy_to_xfer() will call pci_map_sg() to setup
@@ -666,13 +661,8 @@ int tcm_qla2xxx_queue_data_in(struct se_cmd *se_cmd)
 	cmd->bufflen = se_cmd->data_length;
 	cmd->dma_data_direction = tcm_qla2xxx_mapping_dir(se_cmd);
 	cmd->aborted = (se_cmd->transport_state & CMD_T_ABORTED);
-
-	/*
-	 * Setup the struct se_task->task_sg[] chained SG list
-	 */
-	transport_do_task_sg_chain(se_cmd);
-	cmd->sg_cnt = se_cmd->t_tasks_sg_chained_no;
-	cmd->sg = se_cmd->t_tasks_sg_chained;
+	cmd->sg_cnt = se_cmd->t_data_nents;
+	cmd->sg = se_cmd->t_data_sg;
 	cmd->offset = 0;
 
 	/*
@@ -1850,10 +1840,7 @@ static int tcm_qla2xxx_register_configfs(void)
 	 * Setup fabric->tf_ops from our local tcm_qla2xxx_ops
 	 */
 	fabric->tf_ops = tcm_qla2xxx_ops;
-	/*
-	 * Setup the struct se_task->task_sg[] chaining bit
-	 */
-	fabric->tf_ops.task_sg_chaining = 1;
+
 	/*
 	 * Setup default attribute lists for various fabric->tf_cit_tmpl
 	 */
