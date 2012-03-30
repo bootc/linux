@@ -42,6 +42,7 @@ static void vhost_scsi_free_cmd(struct tcm_vhost_cmd *tv_cmd)
 	struct se_cmd *se_cmd = &tv_cmd->tvc_se_cmd;
 
 	/* TODO locking against target/backend threads? */
+	transport_generic_free_cmd(se_cmd, 1);
 
 	if (tv_cmd->tvc_sgl_count) {
 		u32 i;
@@ -49,8 +50,6 @@ static void vhost_scsi_free_cmd(struct tcm_vhost_cmd *tv_cmd)
 			put_page(sg_page(&tv_cmd->tvc_sgl[i]));
 	}
 
-	/* TODO what does wait_for_tasks do? */
-	transport_generic_free_cmd(se_cmd, 1);
 	kfree(tv_cmd);
 }
 
