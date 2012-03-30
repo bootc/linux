@@ -6,6 +6,7 @@ struct vhost_scsi {
 
 	struct vhost_work vs_completion_work; /* cmd completion work item */
 	struct list_head vs_completion_list;  /* cmd completion queue */
+	spinlock_t vs_completion_lock;        /* protects vs_completion_list */
 };
 
 extern int __init vhost_scsi_register(void);

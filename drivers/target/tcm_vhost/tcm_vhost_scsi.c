@@ -54,6 +54,26 @@ static void vhost_scsi_free_cmd(struct tcm_vhost_cmd *tv_cmd)
 	kfree(tv_cmd);
 }
 
+/* Dequeue a command from the completion list */
+static struct tcm_vhost_cmd *vhost_scsi_get_cmd_from_completion(struct vhost_scsi *vs)
+{
+	struct tcm_vhost_cmd *tv_cmd = NULL;
+
+	spin_lock_bh(&vs->vs_completion_lock);
+	if (list_empty(&vs->vs_completion_list)) {
+		spin_unlock_bh(&vs->vs_completion_lock);
+		return NULL;
+	}
+
+	list_for_each_entry(tv_cmd, &vs->vs_completion_list,
+			    tvc_completion_list) {
+		list_del(&tv_cmd->tvc_completion_list);
+		break;
+	}
+	spin_unlock_bh(&vs->vs_completion_lock);
+	return tv_cmd;
+}
+
 /* Fill in status and signal that we are done processing this command
  *
  * This is scheduled in the vhost work queue so we are called with the owner
@@ -64,19 +84,14 @@ static void vhost_scsi_complete_cmd_work(struct vhost_work *work)
 	struct vhost_scsi *vs = container_of(work, struct vhost_scsi,
 	                                     vs_completion_work);
 	struct tcm_vhost_cmd *tv_cmd;
-	struct tcm_vhost_cmd *tmp;
 
-	/* TODO locking? */
-	list_for_each_entry_safe(tv_cmd, tmp, &vs->vs_completion_list,
-	                         tvc_completion_list) {
+	while ((tv_cmd = vhost_scsi_get_cmd_from_completion(vs)) != NULL) {
 		struct virtio_scsi_footer v_footer;
 		struct se_cmd *se_cmd = &tv_cmd->tvc_se_cmd;
 		int ret;
 
 		printk("%s tv_cmd %p resid %u status %#02x\n", __func__,
 			tv_cmd, se_cmd->residual_count, se_cmd->scsi_status);
-
-		list_del(&tv_cmd->tvc_completion_list);
 
 		memset(&v_footer, 0, sizeof(v_footer));
 		v_footer.resid = se_cmd->residual_count;
@@ -104,11 +119,11 @@ void vhost_scsi_complete_cmd(struct tcm_vhost_cmd *tv_cmd)
 
 	printk("%s tv_cmd %p\n", __func__, tv_cmd);
 
-	/* TODO lock tvc_completion_list? */
+	spin_lock_bh(&vs->vs_completion_lock);
 	list_add_tail(&tv_cmd->tvc_completion_list, &vs->vs_completion_list);
-	vhost_work_queue(&vs->dev, &vs->vs_completion_work);
+	spin_unlock_bh(&vs->vs_completion_lock);
 
-	/* TODO is tv_cmd freed by called after this?  Need to keep hold of reference until vhost worker thread is done */
+	vhost_work_queue(&vs->dev, &vs->vs_completion_work);
 }
 
 static struct tcm_vhost_cmd *vhost_scsi_allocate_cmd(
@@ -533,6 +548,7 @@ static int vhost_scsi_open(struct inode *inode, struct file *f)
 
 	vhost_work_init(&s->vs_completion_work, vhost_scsi_complete_cmd_work);
 	INIT_LIST_HEAD(&s->vs_completion_list);
+	spin_lock_init(&s->vs_completion_lock);
 
 	s->cmd_vq.handle_kick = vhost_scsi_handle_kick;
 	r = vhost_dev_init(&s->dev, &s->cmd_vq, 1);
