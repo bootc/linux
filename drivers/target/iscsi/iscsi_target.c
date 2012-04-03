@@ -2922,8 +2922,7 @@ int iscsit_build_r2ts_for_cmd(
 	}
 
 	if (conn->sess->sess_ops->DataSequenceInOrder && (type != 2))
-		if (cmd->r2t_offset < cmd->write_data_done)
-			cmd->r2t_offset = cmd->write_data_done;
+		cmd->r2t_offset = max(cmd->r2t_offset, cmd->write_data_done);
 
 	while (cmd->outstanding_r2ts < conn->sess->sess_ops->MaxOutstandingR2T) {
 		if (conn->sess->sess_ops->DataSequenceInOrder) {
