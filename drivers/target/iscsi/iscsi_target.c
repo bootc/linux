@@ -3515,15 +3515,11 @@ restart:
 			state = qr->state;
 			kmem_cache_free(lio_qr_cache, qr);
 
-			spin_lock_bh(&cmd->istate_lock);
 			switch (state) {
 			case ISTATE_SEND_R2T:
-				spin_unlock_bh(&cmd->istate_lock);
 				ret = iscsit_send_r2t(cmd, conn);
 				break;
 			case ISTATE_REMOVE:
-				spin_unlock_bh(&cmd->istate_lock);
-
 				if (cmd->data_direction == DMA_TO_DEVICE)
 					iscsit_stop_dataout_timer(cmd);
 
@@ -3534,13 +3530,11 @@ restart:
 				iscsit_free_cmd(cmd);
 				continue;
 			case ISTATE_SEND_NOPIN_WANT_RESPONSE:
-				spin_unlock_bh(&cmd->istate_lock);
 				iscsit_mod_nopin_response_timer(conn);
 				ret = iscsit_send_unsolicited_nopin(cmd,
 						conn, 1);
 				break;
 			case ISTATE_SEND_NOPIN_NO_RESPONSE:
-				spin_unlock_bh(&cmd->istate_lock);
 				ret = iscsit_send_unsolicited_nopin(cmd,
 						conn, 0);
 				break;
@@ -3549,7 +3543,6 @@ restart:
 				" 0x%08x, i_state: %d on CID: %hu\n",
 				cmd->iscsi_opcode, cmd->init_task_tag, state,
 				conn->cid);
-				spin_unlock_bh(&cmd->istate_lock);
 				goto transport_err;
 			}
 			if (ret < 0)
@@ -3560,19 +3553,19 @@ restart:
 				goto transport_err;
 			}
 
-			spin_lock_bh(&cmd->istate_lock);
 			switch (state) {
 			case ISTATE_SEND_R2T:
-				spin_unlock_bh(&cmd->istate_lock);
 				spin_lock_bh(&cmd->dataout_timeout_lock);
 				iscsit_start_dataout_timer(cmd, conn);
 				spin_unlock_bh(&cmd->dataout_timeout_lock);
 				break;
 			case ISTATE_SEND_NOPIN_WANT_RESPONSE:
+				spin_lock_bh(&cmd->istate_lock);
 				cmd->i_state = ISTATE_SENT_NOPIN_WANT_RESPONSE;
 				spin_unlock_bh(&cmd->istate_lock);
 				break;
 			case ISTATE_SEND_NOPIN_NO_RESPONSE:
+				spin_lock_bh(&cmd->istate_lock);
 				cmd->i_state = ISTATE_SENT_STATUS;
 				spin_unlock_bh(&cmd->istate_lock);
 				break;
@@ -3581,7 +3574,6 @@ restart:
 					" 0x%08x, i_state: %d on CID: %hu\n",
 					cmd->iscsi_opcode, cmd->init_task_tag,
 					state, conn->cid);
-				spin_unlock_bh(&cmd->istate_lock);
 				goto transport_err;
 			}
 		}
