@@ -2704,6 +2704,16 @@ static int iscsit_send_logout_response(
 	return 0;
 }
 
+static void iscsit_tx_thread_wait_for_tcp(struct iscsi_conn *conn)
+{
+	if ((conn->sock->sk->sk_shutdown & SEND_SHUTDOWN) ||
+	    (conn->sock->sk->sk_shutdown & RCV_SHUTDOWN)) {
+		wait_for_completion_interruptible_timeout(
+					&conn->tx_half_close_comp,
+					ISCSI_TX_THREAD_TCP_TIMEOUT * HZ);
+	}
+}
+
 /*
  *	Unsolicited NOPIN, either requesting a response or not.
  */
@@ -2714,6 +2724,7 @@ static int iscsit_send_unsolicited_nopin(
 {
 	int tx_size = ISCSI_HDR_LEN;
 	struct iscsi_nopin *hdr;
+	int ret;
 
 	hdr			= (struct iscsi_nopin *) cmd->pdu;
 	memset(hdr, 0, ISCSI_HDR_LEN);
@@ -2745,6 +2756,17 @@ static int iscsit_send_unsolicited_nopin(
 
 	pr_debug("Sending Unsolicited NOPIN TTT: 0x%08x StatSN:"
 		" 0x%08x CID: %hu\n", hdr->ttt, cmd->stat_sn, conn->cid);
+
+	ret = iscsit_send_tx_data(cmd, conn, 1);
+	if (ret < 0) {
+		iscsit_tx_thread_wait_for_tcp(conn);
+		return ret;
+	}
+
+	spin_lock_bh(&cmd->istate_lock);
+	cmd->i_state = want_response ?
+		ISTATE_SENT_NOPIN_WANT_RESPONSE : ISTATE_SENT_STATUS;
+	spin_unlock_bh(&cmd->istate_lock);
 
 	return 0;
 }
@@ -2836,13 +2858,14 @@ static int iscsit_send_nopin_response(
 	return 0;
 }
 
-int iscsit_send_r2t(
+static int iscsit_send_r2t(
 	struct iscsi_cmd *cmd,
 	struct iscsi_conn *conn)
 {
 	int tx_size = 0;
 	struct iscsi_r2t *r2t;
 	struct iscsi_r2t_rsp *hdr;
+	int ret;
 
 	r2t = iscsit_get_r2t_from_list(cmd);
 	if (!r2t)
@@ -2897,6 +2920,16 @@ int iscsit_send_r2t(
 	spin_lock_bh(&cmd->r2t_lock);
 	r2t->sent_r2t = 1;
 	spin_unlock_bh(&cmd->r2t_lock);
+
+	ret = iscsit_send_tx_data(cmd, conn, 1);
+	if (ret < 0) {
+		iscsit_tx_thread_wait_for_tcp(conn);
+		return ret;
+	}
+
+	spin_lock_bh(&cmd->dataout_timeout_lock);
+	iscsit_start_dataout_timer(cmd, conn);
+	spin_unlock_bh(&cmd->dataout_timeout_lock);
 
 	return 0;
 }
@@ -3406,16 +3439,6 @@ static int iscsit_send_reject(
 	return 0;
 }
 
-static void iscsit_tx_thread_wait_for_tcp(struct iscsi_conn *conn)
-{
-	if ((conn->sock->sk->sk_shutdown & SEND_SHUTDOWN) ||
-	    (conn->sock->sk->sk_shutdown & RCV_SHUTDOWN)) {
-		wait_for_completion_interruptible_timeout(
-					&conn->tx_half_close_comp,
-					ISCSI_TX_THREAD_TCP_TIMEOUT * HZ);
-	}
-}
-
 void iscsit_thread_get_cpumask(struct iscsi_conn *conn)
 {
 	struct iscsi_thread_set *ts = conn->thread_set;
@@ -3518,6 +3541,8 @@ restart:
 			switch (state) {
 			case ISTATE_SEND_R2T:
 				ret = iscsit_send_r2t(cmd, conn);
+				if (ret < 0)
+					goto transport_err;
 				break;
 			case ISTATE_REMOVE:
 				if (cmd->data_direction == DMA_TO_DEVICE)
@@ -3533,47 +3558,20 @@ restart:
 				iscsit_mod_nopin_response_timer(conn);
 				ret = iscsit_send_unsolicited_nopin(cmd,
 						conn, 1);
+				if (ret < 0)
+					goto transport_err;
 				break;
 			case ISTATE_SEND_NOPIN_NO_RESPONSE:
 				ret = iscsit_send_unsolicited_nopin(cmd,
 						conn, 0);
+				if (ret < 0)
+					goto transport_err;
 				break;
 			default:
 				pr_err("Unknown Opcode: 0x%02x ITT:"
 				" 0x%08x, i_state: %d on CID: %hu\n",
 				cmd->iscsi_opcode, cmd->init_task_tag, state,
 				conn->cid);
-				goto transport_err;
-			}
-			if (ret < 0)
-				goto transport_err;
-
-			if (iscsit_send_tx_data(cmd, conn, 1) < 0) {
-				iscsit_tx_thread_wait_for_tcp(conn);
-				goto transport_err;
-			}
-
-			switch (state) {
-			case ISTATE_SEND_R2T:
-				spin_lock_bh(&cmd->dataout_timeout_lock);
-				iscsit_start_dataout_timer(cmd, conn);
-				spin_unlock_bh(&cmd->dataout_timeout_lock);
-				break;
-			case ISTATE_SEND_NOPIN_WANT_RESPONSE:
-				spin_lock_bh(&cmd->istate_lock);
-				cmd->i_state = ISTATE_SENT_NOPIN_WANT_RESPONSE;
-				spin_unlock_bh(&cmd->istate_lock);
-				break;
-			case ISTATE_SEND_NOPIN_NO_RESPONSE:
-				spin_lock_bh(&cmd->istate_lock);
-				cmd->i_state = ISTATE_SENT_STATUS;
-				spin_unlock_bh(&cmd->istate_lock);
-				break;
-			default:
-				pr_err("Unknown Opcode: 0x%02x ITT:"
-					" 0x%08x, i_state: %d on CID: %hu\n",
-					cmd->iscsi_opcode, cmd->init_task_tag,
-					state, conn->cid);
 				goto transport_err;
 			}
 		}
