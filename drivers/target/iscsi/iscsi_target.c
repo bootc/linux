@@ -3552,13 +3552,10 @@ restart:
 				spin_unlock_bh(&cmd->istate_lock);
 				goto transport_err;
 			}
-			if (ret < 0) {
-				conn->tx_immediate_queue = 0;
+			if (ret < 0)
 				goto transport_err;
-			}
 
 			if (iscsit_send_tx_data(cmd, conn, 1) < 0) {
-				conn->tx_immediate_queue = 0;
 				iscsit_tx_thread_wait_for_tcp(conn);
 				goto transport_err;
 			}
@@ -3588,8 +3585,6 @@ restart:
 				goto transport_err;
 			}
 		}
-
-		conn->tx_immediate_queue = 0;
 
 		while ((qr = iscsit_get_cmd_from_response_queue(conn))) {
 			cmd = qr->cmd;
@@ -3655,21 +3650,17 @@ check_rsp_state:
 				spin_unlock_bh(&cmd->istate_lock);
 				goto transport_err;
 			}
-			if (ret < 0) {
-				conn->tx_response_queue = 0;
+			if (ret < 0)
 				goto transport_err;
-			}
 
 			if (map_sg && !conn->conn_ops->IFMarker) {
 				if (iscsit_fe_sendpage_sg(cmd, conn) < 0) {
-					conn->tx_response_queue = 0;
 					iscsit_tx_thread_wait_for_tcp(conn);
 					iscsit_unmap_iovec(cmd);
 					goto transport_err;
 				}
 			} else {
 				if (iscsit_send_tx_data(cmd, conn, use_misc) < 0) {
-					conn->tx_response_queue = 0;
 					iscsit_tx_thread_wait_for_tcp(conn);
 					iscsit_unmap_iovec(cmd);
 					goto transport_err;
@@ -3745,10 +3736,8 @@ check_rsp_state:
 			spin_unlock_bh(&cmd->istate_lock);
 
 			if (atomic_read(&conn->check_immediate_queue))
-				goto get_immediate;
+				break;
 		}
-
-		conn->tx_response_queue = 0;
 	}
 
 transport_err:
