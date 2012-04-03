@@ -289,7 +289,7 @@ static int iscsit_task_reassign_complete_write(
 	/*
 	 * iscsit_build_r2ts_for_cmd() can handle the rest from here.
 	 */
-	return iscsit_build_r2ts_for_cmd(cmd, conn, 2);
+	return iscsit_build_r2ts_for_cmd(cmd, conn, true);
 }
 
 static int iscsit_task_reassign_complete_read(

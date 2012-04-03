@@ -982,7 +982,7 @@ int iscsit_execute_cmd(struct iscsi_cmd *cmd, int ooo)
 					return 0;
 
 				iscsit_set_dataout_sequence_values(cmd);
-				iscsit_build_r2ts_for_cmd(cmd, cmd->conn, 0);
+				iscsit_build_r2ts_for_cmd(cmd, cmd->conn, false);
 			}
 			return 0;
 		}

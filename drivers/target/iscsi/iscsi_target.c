@@ -1441,7 +1441,7 @@ static int iscsit_handle_data_out(struct iscsi_conn *conn, unsigned char *buf)
 		return 0;
 	else if (ret == DATAOUT_SEND_R2T) {
 		iscsit_set_dataout_sequence_values(cmd);
-		iscsit_build_r2ts_for_cmd(cmd, conn, 0);
+		iscsit_build_r2ts_for_cmd(cmd, conn, false);
 	} else if (ret == DATAOUT_SEND_TO_TRANSPORT) {
 		/*
 		 * Handle extra special case for out of order
@@ -2949,15 +2949,13 @@ static int iscsit_send_r2t(
 }
 
 /*
- *	type 0: Normal Operation.
- *	type 1: Called from Storage Transport.
- *	type 2: Called from iscsi_task_reassign_complete_write() for
- *	        connection recovery.
+ *	@recovery: If called from iscsi_task_reassign_complete_write() for
+ *		connection recovery.
  */
 int iscsit_build_r2ts_for_cmd(
 	struct iscsi_cmd *cmd,
 	struct iscsi_conn *conn,
-	int type)
+	bool recovery)
 {
 	int first_r2t = 1;
 	u32 offset = 0, xfer_len = 0;
@@ -2968,27 +2966,33 @@ int iscsit_build_r2ts_for_cmd(
 		return 0;
 	}
 
-	if (conn->sess->sess_ops->DataSequenceInOrder && (type != 2))
+	if (conn->sess->sess_ops->DataSequenceInOrder &&
+	    !recovery)
 		cmd->r2t_offset = max(cmd->r2t_offset, cmd->write_data_done);
 
 	while (cmd->outstanding_r2ts < conn->sess->sess_ops->MaxOutstandingR2T) {
 		if (conn->sess->sess_ops->DataSequenceInOrder) {
 			offset = cmd->r2t_offset;
 
-			if (first_r2t && (type == 2)) {
-				xfer_len = ((offset +
-					     (conn->sess->sess_ops->MaxBurstLength -
-					     cmd->next_burst_len) >
-					     cmd->data_length) ?
-					    (cmd->data_length - offset) :
-					    (conn->sess->sess_ops->MaxBurstLength -
-					     cmd->next_burst_len));
+			if (first_r2t && recovery) {
+				int new_data_end = offset +
+					conn->sess->sess_ops->MaxBurstLength -
+					cmd->next_burst_len;
+
+				if (new_data_end > cmd->data_length)
+					xfer_len = cmd->data_length - offset;
+				else
+					xfer_len =
+						conn->sess->sess_ops->MaxBurstLength -
+						cmd->next_burst_len;
 			} else {
-				xfer_len = ((offset +
-					     conn->sess->sess_ops->MaxBurstLength) >
-					     cmd->data_length) ?
-					     (cmd->data_length - offset) :
-					     conn->sess->sess_ops->MaxBurstLength;
+				int new_data_end = offset +
+					conn->sess->sess_ops->MaxBurstLength;
+
+				if (new_data_end > cmd->data_length)
+					xfer_len = cmd->data_length - offset;
+				else
+					xfer_len = conn->sess->sess_ops->MaxBurstLength;
 			}
 			cmd->r2t_offset += xfer_len;
 
