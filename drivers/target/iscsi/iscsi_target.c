@@ -2177,7 +2177,7 @@ static int iscsit_handle_logout_cmd(
 	 * Immediate commands are executed, well, immediately.
 	 * Non-Immediate Logout Commands are executed in CmdSN order.
 	 */
-	if (hdr->opcode & ISCSI_OP_IMMEDIATE) {
+	if (cmd->immediate_cmd) {
 		int ret = iscsit_execute_cmd(cmd, 0);
 
 		if (ret < 0)
