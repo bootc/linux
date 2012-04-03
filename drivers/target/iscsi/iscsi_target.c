@@ -3508,13 +3508,193 @@ static inline void iscsit_thread_check_cpumask(
 	set_cpus_allowed_ptr(p, conn->conn_cpumask);
 }
 
+static int handle_immediate_queue(struct iscsi_conn *conn)
+{
+	struct iscsi_queue_req *qr;
+	struct iscsi_cmd *cmd;
+	u8 state;
+	int ret;
+
+	while ((qr = iscsit_get_cmd_from_immediate_queue(conn))) {
+		atomic_set(&conn->check_immediate_queue, 0);
+		cmd = qr->cmd;
+		state = qr->state;
+		kmem_cache_free(lio_qr_cache, qr);
+
+		switch (state) {
+		case ISTATE_SEND_R2T:
+			ret = iscsit_send_r2t(cmd, conn);
+			if (ret < 0)
+				goto err;
+			break;
+		case ISTATE_REMOVE:
+			if (cmd->data_direction == DMA_TO_DEVICE)
+				iscsit_stop_dataout_timer(cmd);
+
+			spin_lock_bh(&conn->cmd_lock);
+			list_del(&cmd->i_conn_node);
+			spin_unlock_bh(&conn->cmd_lock);
+
+			iscsit_free_cmd(cmd);
+			continue;
+		case ISTATE_SEND_NOPIN_WANT_RESPONSE:
+			iscsit_mod_nopin_response_timer(conn);
+			ret = iscsit_send_unsolicited_nopin(cmd,
+							    conn, 1);
+			if (ret < 0)
+				goto err;
+			break;
+		case ISTATE_SEND_NOPIN_NO_RESPONSE:
+			ret = iscsit_send_unsolicited_nopin(cmd,
+							    conn, 0);
+			if (ret < 0)
+				goto err;
+			break;
+		default:
+			pr_err("Unknown Opcode: 0x%02x ITT:"
+			       " 0x%08x, i_state: %d on CID: %hu\n",
+			       cmd->iscsi_opcode, cmd->init_task_tag, state,
+			       conn->cid);
+			goto err;
+		}
+	}
+
+	return 0;
+
+err:
+	return -1;
+}
+
+static int handle_response_queue(struct iscsi_conn *conn)
+{
+	struct iscsi_queue_req *qr;
+	struct iscsi_cmd *cmd;
+	u8 state;
+	int ret;
+
+	while ((qr = iscsit_get_cmd_from_response_queue(conn))) {
+		cmd = qr->cmd;
+		state = qr->state;
+		kmem_cache_free(lio_qr_cache, qr);
+
+check_rsp_state:
+		switch (state) {
+		case ISTATE_SEND_DATAIN:
+			ret = iscsit_send_data_in(cmd, conn);
+			if (ret < 0)
+				goto err;
+			else if (!ret)
+				/* more drs */
+				goto check_rsp_state;
+			else if (ret == 1) {
+				/* all done */
+				spin_lock_bh(&cmd->istate_lock);
+				cmd->i_state = ISTATE_SENT_STATUS;
+				spin_unlock_bh(&cmd->istate_lock);
+				continue;
+			} else if (ret == 2) {
+				/* Still must send status,
+				   SCF_TRANSPORT_TASK_SENSE was set */
+				spin_lock_bh(&cmd->istate_lock);
+				cmd->i_state = ISTATE_SEND_STATUS;
+				spin_unlock_bh(&cmd->istate_lock);
+				state = ISTATE_SEND_STATUS;
+				goto check_rsp_state;
+			}
+
+			break;
+		case ISTATE_SEND_STATUS:
+		case ISTATE_SEND_STATUS_RECOVERY:
+			ret = iscsit_send_status(cmd, conn);
+			break;
+		case ISTATE_SEND_LOGOUTRSP:
+			ret = iscsit_send_logout_response(cmd, conn);
+			break;
+		case ISTATE_SEND_ASYNCMSG:
+			ret = iscsit_send_conn_drop_async_message(
+				cmd, conn);
+			break;
+		case ISTATE_SEND_NOPIN:
+			ret = iscsit_send_nopin_response(cmd, conn);
+			break;
+		case ISTATE_SEND_REJECT:
+			ret = iscsit_send_reject(cmd, conn);
+			break;
+		case ISTATE_SEND_TASKMGTRSP:
+			ret = iscsit_send_task_mgt_rsp(cmd, conn);
+			if (ret != 0)
+				break;
+			ret = iscsit_tmr_post_handler(cmd, conn);
+			if (ret != 0)
+				iscsit_fall_back_to_erl0(conn->sess);
+			break;
+		case ISTATE_SEND_TEXTRSP:
+			ret = iscsit_send_text_rsp(cmd, conn);
+			break;
+		default:
+			pr_err("Unknown Opcode: 0x%02x ITT:"
+			       " 0x%08x, i_state: %d on CID: %hu\n",
+			       cmd->iscsi_opcode, cmd->init_task_tag,
+			       state, conn->cid);
+			goto err;
+		}
+		if (ret < 0)
+			goto err;
+
+		if (iscsit_send_tx_data(cmd, conn, 1) < 0) {
+			iscsit_tx_thread_wait_for_tcp(conn);
+			iscsit_unmap_iovec(cmd);
+			goto err;
+		}
+		iscsit_unmap_iovec(cmd);
+
+		switch (state) {
+		case ISTATE_SEND_LOGOUTRSP:
+			if (!iscsit_logout_post_handler(cmd, conn))
+				goto restart;
+			/* fall through */
+		case ISTATE_SEND_STATUS:
+		case ISTATE_SEND_ASYNCMSG:
+		case ISTATE_SEND_NOPIN:
+		case ISTATE_SEND_STATUS_RECOVERY:
+		case ISTATE_SEND_TEXTRSP:
+		case ISTATE_SEND_TASKMGTRSP:
+			spin_lock_bh(&cmd->istate_lock);
+			cmd->i_state = ISTATE_SENT_STATUS;
+			spin_unlock_bh(&cmd->istate_lock);
+			break;
+		case ISTATE_SEND_REJECT:
+			if (cmd->cmd_flags & ICF_REJECT_FAIL_CONN) {
+				cmd->cmd_flags &= ~ICF_REJECT_FAIL_CONN;
+				complete(&cmd->reject_comp);
+				goto err;
+			}
+			complete(&cmd->reject_comp);
+			break;
+		default:
+			pr_err("Unknown Opcode: 0x%02x ITT:"
+			       " 0x%08x, i_state: %d on CID: %hu\n",
+			       cmd->iscsi_opcode, cmd->init_task_tag,
+			       cmd->i_state, conn->cid);
+			goto err;
+		}
+
+		if (atomic_read(&conn->check_immediate_queue))
+			break;
+	}
+
+	return 0;
+
+err:
+	return -1;
+restart:
+	return -EAGAIN;
+}
+
 int iscsi_target_tx_thread(void *arg)
 {
-	u8 state;
 	int ret = 0;
-	struct iscsi_cmd *cmd = NULL;
 	struct iscsi_conn *conn;
-	struct iscsi_queue_req *qr = NULL;
 	struct iscsi_thread_set *ts = arg;
 	/*
 	 * Allow ourselves to be interrupted by SIGINT so that a
@@ -3542,160 +3722,15 @@ restart:
 		     signal_pending(current))
 			goto transport_err;
 
-		while ((qr = iscsit_get_cmd_from_immediate_queue(conn))) {
-			atomic_set(&conn->check_immediate_queue, 0);
-			cmd = qr->cmd;
-			state = qr->state;
-			kmem_cache_free(lio_qr_cache, qr);
+		ret = handle_immediate_queue(conn);
+		if (ret < 0)
+			goto transport_err;
 
-			switch (state) {
-			case ISTATE_SEND_R2T:
-				ret = iscsit_send_r2t(cmd, conn);
-				if (ret < 0)
-					goto transport_err;
-				break;
-			case ISTATE_REMOVE:
-				if (cmd->data_direction == DMA_TO_DEVICE)
-					iscsit_stop_dataout_timer(cmd);
-
-				spin_lock_bh(&conn->cmd_lock);
-				list_del(&cmd->i_conn_node);
-				spin_unlock_bh(&conn->cmd_lock);
-
-				iscsit_free_cmd(cmd);
-				continue;
-			case ISTATE_SEND_NOPIN_WANT_RESPONSE:
-				iscsit_mod_nopin_response_timer(conn);
-				ret = iscsit_send_unsolicited_nopin(cmd,
-						conn, 1);
-				if (ret < 0)
-					goto transport_err;
-				break;
-			case ISTATE_SEND_NOPIN_NO_RESPONSE:
-				ret = iscsit_send_unsolicited_nopin(cmd,
-						conn, 0);
-				if (ret < 0)
-					goto transport_err;
-				break;
-			default:
-				pr_err("Unknown Opcode: 0x%02x ITT:"
-				" 0x%08x, i_state: %d on CID: %hu\n",
-				cmd->iscsi_opcode, cmd->init_task_tag, state,
-				conn->cid);
-				goto transport_err;
-			}
-		}
-
-		while ((qr = iscsit_get_cmd_from_response_queue(conn))) {
-			cmd = qr->cmd;
-			state = qr->state;
-			kmem_cache_free(lio_qr_cache, qr);
-
-check_rsp_state:
-			switch (state) {
-			case ISTATE_SEND_DATAIN:
-				ret = iscsit_send_data_in(cmd, conn);
-				if (ret < 0)
-					goto transport_err;
-				else if (!ret)
-					/* more drs */
-					goto check_rsp_state;
-				else if (ret == 1) {
-					/* all done */
-					spin_lock_bh(&cmd->istate_lock);
-					cmd->i_state = ISTATE_SENT_STATUS;
-					spin_unlock_bh(&cmd->istate_lock);
-					continue;
-				} else if (ret == 2) {
-					/* Still must send status,
-					   SCF_TRANSPORT_TASK_SENSE was set */
-					spin_lock_bh(&cmd->istate_lock);
-					cmd->i_state = ISTATE_SEND_STATUS;
-					spin_unlock_bh(&cmd->istate_lock);
-					state = ISTATE_SEND_STATUS;
-					goto check_rsp_state;
-				}
-
-				break;
-			case ISTATE_SEND_STATUS:
-			case ISTATE_SEND_STATUS_RECOVERY:
-				ret = iscsit_send_status(cmd, conn);
-				break;
-			case ISTATE_SEND_LOGOUTRSP:
-				ret = iscsit_send_logout_response(cmd, conn);
-				break;
-			case ISTATE_SEND_ASYNCMSG:
-				ret = iscsit_send_conn_drop_async_message(
-						cmd, conn);
-				break;
-			case ISTATE_SEND_NOPIN:
-				ret = iscsit_send_nopin_response(cmd, conn);
-				break;
-			case ISTATE_SEND_REJECT:
-				ret = iscsit_send_reject(cmd, conn);
-				break;
-			case ISTATE_SEND_TASKMGTRSP:
-				ret = iscsit_send_task_mgt_rsp(cmd, conn);
-				if (ret != 0)
-					break;
-				ret = iscsit_tmr_post_handler(cmd, conn);
-				if (ret != 0)
-					iscsit_fall_back_to_erl0(conn->sess);
-				break;
-			case ISTATE_SEND_TEXTRSP:
-				ret = iscsit_send_text_rsp(cmd, conn);
-				break;
-			default:
-				pr_err("Unknown Opcode: 0x%02x ITT:"
-					" 0x%08x, i_state: %d on CID: %hu\n",
-					cmd->iscsi_opcode, cmd->init_task_tag,
-					state, conn->cid);
-				goto transport_err;
-			}
-			if (ret < 0)
-				goto transport_err;
-
-			if (iscsit_send_tx_data(cmd, conn, 1) < 0) {
-				iscsit_tx_thread_wait_for_tcp(conn);
-				iscsit_unmap_iovec(cmd);
-				goto transport_err;
-			}
-			iscsit_unmap_iovec(cmd);
-
-			switch (state) {
-			case ISTATE_SEND_LOGOUTRSP:
-				if (!iscsit_logout_post_handler(cmd, conn))
-					goto restart;
-				/* fall through */
-			case ISTATE_SEND_STATUS:
-			case ISTATE_SEND_ASYNCMSG:
-			case ISTATE_SEND_NOPIN:
-			case ISTATE_SEND_STATUS_RECOVERY:
-			case ISTATE_SEND_TEXTRSP:
-			case ISTATE_SEND_TASKMGTRSP:
-				spin_lock_bh(&cmd->istate_lock);
-				cmd->i_state = ISTATE_SENT_STATUS;
-				spin_unlock_bh(&cmd->istate_lock);
-				break;
-			case ISTATE_SEND_REJECT:
-				if (cmd->cmd_flags & ICF_REJECT_FAIL_CONN) {
-					cmd->cmd_flags &= ~ICF_REJECT_FAIL_CONN;
-					complete(&cmd->reject_comp);
-					goto transport_err;
-				}
-				complete(&cmd->reject_comp);
-				break;
-			default:
-				pr_err("Unknown Opcode: 0x%02x ITT:"
-					" 0x%08x, i_state: %d on CID: %hu\n",
-					cmd->iscsi_opcode, cmd->init_task_tag,
-					cmd->i_state, conn->cid);
-				goto transport_err;
-			}
-
-			if (atomic_read(&conn->check_immediate_queue))
-				break;
-		}
+		ret = handle_response_queue(conn);
+		if (ret == -EAGAIN)
+			goto restart;
+		else if (ret < 0)
+			goto transport_err;
 	}
 
 transport_err:
