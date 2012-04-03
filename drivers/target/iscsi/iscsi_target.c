@@ -3228,6 +3228,8 @@ static bool iscsit_check_inaddr_any(struct iscsi_np *np)
 	return ret;
 }
 
+#define SENDTARGETS_BUF_LIMIT 32768U
+
 static int iscsit_build_sendtargets_response(struct iscsi_cmd *cmd)
 {
 	char *payload = NULL;
@@ -3236,12 +3238,10 @@ static int iscsit_build_sendtargets_response(struct iscsi_cmd *cmd)
 	struct iscsi_tiqn *tiqn;
 	struct iscsi_tpg_np *tpg_np;
 	int buffer_len, end_of_buf = 0, len = 0, payload_len = 0;
-	unsigned char buf[256];
+	unsigned char buf[ISCSI_IQN_LEN+12]; /* iqn + "TargetName=" + \0 */
 
-	buffer_len = (conn->conn_ops->MaxRecvDataSegmentLength > 32768) ?
-			32768 : conn->conn_ops->MaxRecvDataSegmentLength;
-
-	memset(buf, 0, 256);
+	buffer_len = max(conn->conn_ops->MaxRecvDataSegmentLength,
+			 SENDTARGETS_BUF_LIMIT);
 
 	payload = kzalloc(buffer_len, GFP_KERNEL);
 	if (!payload) {
