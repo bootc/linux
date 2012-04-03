@@ -296,7 +296,6 @@ struct iscsi_datain_req {
 	u32			runlength;
 	u32			data_length;
 	u32			data_offset;
-	u32			data_offset_end;
 	u32			data_sn;
 	u32			next_burst_len;
 	u32			read_data_done;

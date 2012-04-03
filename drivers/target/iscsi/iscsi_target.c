@@ -592,7 +592,7 @@ static void __exit iscsi_target_cleanup_module(void)
 	kfree(iscsit_global);
 }
 
-int iscsit_add_reject(
+static int iscsit_add_reject(
 	u8 reason,
 	int fail_conn,
 	unsigned char *buf,
