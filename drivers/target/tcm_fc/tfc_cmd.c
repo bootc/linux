@@ -121,6 +121,8 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	struct fc_exch *ep;
 	size_t len;
 
+	if (cmd->aborted)
+		return 0;
 	ft_dump_cmd(cmd, __func__);
 	ep = fc_seq_exch(cmd->seq);
 	lport = ep->lp;
@@ -187,6 +189,8 @@ int ft_write_pending(struct se_cmd *se_cmd)
 
 	ft_dump_cmd(cmd, __func__);
 
+	if (cmd->aborted)
+		return 0;
 	ep = fc_seq_exch(cmd->seq);
 	lport = ep->lp;
 	fp = fc_frame_alloc(lport, sizeof(*txrdy));
@@ -245,7 +249,7 @@ static void ft_recv_seq(struct fc_seq *sp, struct fc_frame *fp, void *arg)
 	if (IS_ERR(fp)) {
 		/* XXX need to find cmd if queued */
 		cmd->seq = NULL;
-		transport_generic_free_cmd(&cmd->se_cmd, 0);
+		cmd->aborted = true;
 		return;
 	}
 
@@ -387,6 +391,8 @@ int ft_queue_tm_resp(struct se_cmd *se_cmd)
 	struct se_tmr_req *tmr = se_cmd->se_tmr_req;
 	enum fcp_resp_rsp_codes code;
 
+	if (cmd->aborted)
+		return 0;
 	switch (tmr->response) {
 	case TMR_FUNCTION_COMPLETE:
 		code = FCP_TMF_CMPL;
