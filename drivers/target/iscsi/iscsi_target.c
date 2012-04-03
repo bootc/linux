@@ -3416,8 +3416,6 @@ static void iscsit_tx_thread_wait_for_tcp(struct iscsi_conn *conn)
 	}
 }
 
-#ifdef CONFIG_SMP
-
 void iscsit_thread_get_cpumask(struct iscsi_conn *conn)
 {
 	struct iscsi_thread_set *ts = conn->thread_set;
@@ -3431,10 +3429,6 @@ void iscsit_thread_get_cpumask(struct iscsi_conn *conn)
 	 * execute upon.
 	 */
 	ord = ts->thread_id % cpumask_weight(cpu_online_mask);
-#if 0
-	pr_debug(">>>>>>>>>>>>>>>>>>>> Generated ord: %d from"
-			" thread_id: %d\n", ord, ts->thread_id);
-#endif
 	for_each_online_cpu(cpu) {
 		if (ord-- == 0) {
 			cpumask_set_cpu(cpu, conn->conn_cpumask);
@@ -3474,22 +3468,8 @@ static inline void iscsit_thread_check_cpumask(
 	 */
 	memset(buf, 0, 128);
 	cpumask_scnprintf(buf, 128, conn->conn_cpumask);
-#if 0
-	pr_debug(">>>>>>>>>>>>>> Calling set_cpus_allowed_ptr():"
-			" %s for %s\n", buf, p->comm);
-#endif
 	set_cpus_allowed_ptr(p, conn->conn_cpumask);
 }
-
-#else
-
-void iscsit_thread_get_cpumask(struct iscsi_conn *conn)
-{
-	return;
-}
-
-#define iscsit_thread_check_cpumask(X, Y, Z) ({})
-#endif /* CONFIG_SMP */
 
 int iscsi_target_tx_thread(void *arg)
 {
