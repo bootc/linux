@@ -3509,9 +3509,7 @@ restart:
 		     signal_pending(current))
 			goto transport_err;
 
-get_immediate:
-		qr = iscsit_get_cmd_from_immediate_queue(conn);
-		if (qr) {
+		while ((qr = iscsit_get_cmd_from_immediate_queue(conn))) {
 			atomic_set(&conn->check_immediate_queue, 0);
 			cmd = qr->cmd;
 			state = qr->state;
@@ -3534,7 +3532,7 @@ get_immediate:
 				spin_unlock_bh(&conn->cmd_lock);
 
 				iscsit_free_cmd(cmd);
-				goto get_immediate;
+				continue;
 			case ISTATE_SEND_NOPIN_WANT_RESPONSE:
 				spin_unlock_bh(&cmd->istate_lock);
 				iscsit_mod_nopin_response_timer(conn);
@@ -3589,13 +3587,11 @@ get_immediate:
 				spin_unlock_bh(&cmd->istate_lock);
 				goto transport_err;
 			}
-			goto get_immediate;
-		} else
-			conn->tx_immediate_queue = 0;
+		}
 
-get_response:
-		qr = iscsit_get_cmd_from_response_queue(conn);
-		if (qr) {
+		conn->tx_immediate_queue = 0;
+
+		while ((qr = iscsit_get_cmd_from_response_queue(conn))) {
 			cmd = qr->cmd;
 			state = qr->state;
 			kmem_cache_free(lio_qr_cache, qr);
@@ -3750,10 +3746,9 @@ check_rsp_state:
 
 			if (atomic_read(&conn->check_immediate_queue))
 				goto get_immediate;
+		}
 
-			goto get_response;
-		} else
-			conn->tx_response_queue = 0;
+		conn->tx_response_queue = 0;
 	}
 
 transport_err:
