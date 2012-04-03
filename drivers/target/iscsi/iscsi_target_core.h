@@ -300,7 +300,7 @@ struct iscsi_datain_req {
 	u32			next_burst_len;
 	u32			read_data_done;
 	u32			seq_send_order;
-	struct list_head	dr_list;
+	struct list_head	cmd_datain_node;
 } ____cacheline_aligned;
 
 struct iscsi_ooo_cmdsn {
