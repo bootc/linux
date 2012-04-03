@@ -621,7 +621,7 @@ int iscsit_add_reject(
 	}
 
 	spin_lock_bh(&conn->cmd_lock);
-	list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+	list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 	spin_unlock_bh(&conn->cmd_lock);
 
 	cmd->i_state = ISTATE_SEND_REJECT;
@@ -668,7 +668,7 @@ int iscsit_add_reject_from_cmd(
 
 	if (add_to_conn) {
 		spin_lock_bh(&conn->cmd_lock);
-		list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+		list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 		spin_unlock_bh(&conn->cmd_lock);
 	}
 
@@ -743,7 +743,7 @@ static void iscsit_ack_from_expstatsn(struct iscsi_conn *conn, u32 exp_statsn)
 	conn->exp_statsn = exp_statsn;
 
 	spin_lock_bh(&conn->cmd_lock);
-	list_for_each_entry(cmd, &conn->conn_cmd_list, i_list) {
+	list_for_each_entry(cmd, &conn->conn_cmd_list, i_conn_node) {
 		spin_lock(&cmd->istate_lock);
 		if ((cmd->i_state == ISTATE_SENT_STATUS) &&
 		    (cmd->stat_sn < exp_statsn)) {
@@ -1044,7 +1044,7 @@ done:
 
 attach_cmd:
 	spin_lock_bh(&conn->cmd_lock);
-	list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+	list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 	spin_unlock_bh(&conn->cmd_lock);
 	/*
 	 * Check if we need to delay processing because of ALUA
@@ -1616,7 +1616,7 @@ static int iscsit_handle_nop_out(
 		 * Initiator is expecting a NopIN ping reply,
 		 */
 		spin_lock_bh(&conn->cmd_lock);
-		list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+		list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 		spin_unlock_bh(&conn->cmd_lock);
 
 		iscsit_ack_from_expstatsn(conn, hdr->exp_statsn);
@@ -1803,7 +1803,7 @@ static int iscsit_handle_task_mgt_cmd(
 		se_tmr->call_transport = 1;
 attach:
 	spin_lock_bh(&conn->cmd_lock);
-	list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+	list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 	spin_unlock_bh(&conn->cmd_lock);
 
 	if (!(hdr->opcode & ISCSI_OP_IMMEDIATE)) {
@@ -1979,7 +1979,7 @@ static int iscsit_handle_text_cmd(
 	cmd->data_direction	= DMA_NONE;
 
 	spin_lock_bh(&conn->cmd_lock);
-	list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+	list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 	spin_unlock_bh(&conn->cmd_lock);
 
 	iscsit_ack_from_expstatsn(conn, hdr->exp_statsn);
@@ -2167,7 +2167,7 @@ static int iscsit_handle_logout_cmd(
 		logout_remove = 1;
 
 	spin_lock_bh(&conn->cmd_lock);
-	list_add_tail(&cmd->i_list, &conn->conn_cmd_list);
+	list_add_tail(&cmd->i_conn_node, &conn->conn_cmd_list);
 	spin_unlock_bh(&conn->cmd_lock);
 
 	if (reason_code != ISCSI_LOGOUT_REASON_RECOVERY)
@@ -2380,7 +2380,7 @@ static void iscsit_build_conn_drop_async_message(struct iscsi_conn *conn)
 	cmd->i_state = ISTATE_SEND_ASYNCMSG;
 
 	spin_lock_bh(&conn_p->cmd_lock);
-	list_add_tail(&cmd->i_list, &conn_p->conn_cmd_list);
+	list_add_tail(&cmd->i_conn_node, &conn_p->conn_cmd_list);
 	spin_unlock_bh(&conn_p->cmd_lock);
 
 	iscsit_add_cmd_to_response_queue(cmd, conn_p, cmd->i_state);
@@ -3551,7 +3551,7 @@ get_immediate:
 					iscsit_stop_dataout_timer(cmd);
 
 				spin_lock_bh(&conn->cmd_lock);
-				list_del(&cmd->i_list);
+				list_del(&cmd->i_conn_node);
 				spin_unlock_bh(&conn->cmd_lock);
 
 				iscsit_free_cmd(cmd);
@@ -3951,9 +3951,9 @@ static void iscsit_release_commands_from_conn(struct iscsi_conn *conn)
 	 * has been reset -> returned sleeping pre-handler state.
 	 */
 	spin_lock_bh(&conn->cmd_lock);
-	list_for_each_entry_safe(cmd, cmd_tmp, &conn->conn_cmd_list, i_list) {
+	list_for_each_entry_safe(cmd, cmd_tmp, &conn->conn_cmd_list, i_conn_node) {
 
-		list_del(&cmd->i_list);
+		list_del(&cmd->i_conn_node);
 		spin_unlock_bh(&conn->cmd_lock);
 
 		iscsit_increment_maxcmdsn(cmd, sess);
@@ -3971,7 +3971,7 @@ static void iscsit_stop_timers_for_cmds(
 	struct iscsi_cmd *cmd;
 
 	spin_lock_bh(&conn->cmd_lock);
-	list_for_each_entry(cmd, &conn->conn_cmd_list, i_list) {
+	list_for_each_entry(cmd, &conn->conn_cmd_list, i_conn_node) {
 		if (cmd->data_direction == DMA_TO_DEVICE)
 			iscsit_stop_dataout_timer(cmd);
 	}
