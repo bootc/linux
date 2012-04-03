@@ -371,7 +371,7 @@ static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 		/*
 		 * Copy in the recieved CDB descriptor into tv_cmd->tvc_cdb
 		 * that will be used by tcm_vhost_new_cmd_map() and down into
-		 * transport_generic_allocate_tasks()
+		 * target_setup_cmd_from_cdb()
 		 */
 		ret = __copy_from_user(tv_cmd->tvc_cdb, vq->iov[1].iov_base,
 					vq->iov[1].iov_len);

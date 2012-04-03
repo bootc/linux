@@ -870,7 +870,7 @@ static int tcm_queuecommand(struct ibmvscsis_adapter *adapter,
 	/*
 	 * Allocate the necessary tasks to complete the received CDB+data
 	 */
-	ret = transport_generic_allocate_tasks(se_cmd, scmd->cdb);
+	ret = target_setup_cmd_from_cdb(se_cmd, scmd->cdb);
 	if (ret == -ENOMEM) {
 		transport_send_check_condition_and_sense(se_cmd,
 				TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE, 0);

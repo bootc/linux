@@ -235,7 +235,7 @@ int tcm_vhost_new_cmd_map(struct se_cmd *se_cmd)
 	/*
 	 * Allocate the necessary tasks to complete the received CDB+data
 	 */
-	ret = transport_generic_allocate_tasks(se_cmd, tv_cmd->tvc_cdb);
+	ret = target_setup_cmd_from_cdb(se_cmd, tv_cmd->tvc_cdb);
 	if (ret != 0)
 		return ret;
 	/*

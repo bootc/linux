@@ -531,7 +531,7 @@ int usbg_new_cmd(struct se_cmd *se_cmd)
 			se_cmd);
 	int ret;
 
-	ret = transport_generic_allocate_tasks(se_cmd, cmd->cmd_buf);
+	ret = target_setup_cmd_from_cdb(se_cmd, cmd->cmd_buf);
 	if (ret)
 		return ret;
 
