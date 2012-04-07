@@ -6,8 +6,7 @@ int sbp_run_transaction(struct fw_card *card, int tcode, int destination_id,
 		void *payload, size_t length);
 
 void sbp_handle_command(struct sbp_target_request *req);
-int sbp_rw_data(struct sbp_target_request *req, bool sync);
-int sbp_rw_data_waitcomplete(struct sbp_target_request *req);
+int sbp_rw_data(struct sbp_target_request *req);
 int sbp_send_status(struct sbp_target_request *req);
 int sbp_send_sense(struct sbp_target_request *req);
 void sbp_free_request(struct sbp_target_request *req);

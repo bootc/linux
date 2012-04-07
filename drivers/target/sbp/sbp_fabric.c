@@ -136,15 +136,29 @@ int sbp_write_pending(struct se_cmd *se_cmd)
 			struct sbp_target_request, se_cmd);
 	int ret;
 
-	ret = sbp_rw_data_waitcomplete(req);
-	if (ret) {
+	req->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
+	if (!req->data_buf) {
 		req->status.status |= cpu_to_be32(
-			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_RESP(
+				STATUS_RESP_REQUEST_COMPLETE) |
 			STATUS_BLOCK_DEAD(0) |
 			STATUS_BLOCK_LEN(1) |
-			STATUS_BLOCK_SBP_STATUS(SBP_STATUS_UNSPECIFIED_ERROR));
+			STATUS_BLOCK_SBP_STATUS(
+				SBP_STATUS_RESOURCES_UNAVAIL));
 		sbp_send_status(req);
-		pr_warn("sbp_write_pending: data read error\n");
+		return -ENOMEM;
+	}
+
+	ret = sbp_rw_data(req);
+	if (ret) {
+		req->status.status |= cpu_to_be32(
+			STATUS_BLOCK_RESP(
+				STATUS_RESP_TRANSPORT_FAILURE) |
+			STATUS_BLOCK_DEAD(0) |
+			STATUS_BLOCK_LEN(1) |
+			STATUS_BLOCK_SBP_STATUS(
+				SBP_STATUS_UNSPECIFIED_ERROR));
+		sbp_send_status(req);
 		return ret;
 	}
 
@@ -197,7 +211,7 @@ int sbp_queue_data_in(struct se_cmd *se_cmd)
 		req->data_buf,
 		se_cmd->data_length);
 
-	ret = sbp_rw_data(req, true);
+	ret = sbp_rw_data(req);
 	if (ret) {
 		req->status.status |= cpu_to_be32(
 			STATUS_BLOCK_RESP(STATUS_RESP_TRANSPORT_FAILURE) |

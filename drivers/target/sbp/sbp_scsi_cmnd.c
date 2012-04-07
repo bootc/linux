@@ -252,40 +252,6 @@ void sbp_handle_command(struct sbp_target_request *req)
 	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d data_dir:%d\n",
 			unpacked_lun, data_length, data_dir);
 
-	/* pre-fetch data to write */
-	if (data_dir == DMA_TO_DEVICE) {
-		req->data_buf = kmalloc(data_length, GFP_KERNEL);
-		if (!req->data_buf) {
-			req->status.status |= cpu_to_be32(
-					STATUS_BLOCK_RESP(
-						STATUS_RESP_REQUEST_COMPLETE) |
-					STATUS_BLOCK_DEAD(0) |
-					STATUS_BLOCK_LEN(1) |
-					STATUS_BLOCK_SBP_STATUS(
-						SBP_STATUS_RESOURCES_UNAVAIL));
-			sbp_send_status(req);
-			sbp_free_request(req);
-			return;
-		}
-
-		req->se_cmd.data_direction = data_dir;
-		req->se_cmd.data_length = data_length;
-
-		ret = sbp_rw_data(req, false);
-		if (ret) {
-			req->status.status |= cpu_to_be32(
-					STATUS_BLOCK_RESP(
-						STATUS_RESP_TRANSPORT_FAILURE) |
-					STATUS_BLOCK_DEAD(0) |
-					STATUS_BLOCK_LEN(1) |
-					STATUS_BLOCK_SBP_STATUS(
-						SBP_STATUS_UNSPECIFIED_ERROR));
-			sbp_send_status(req);
-			sbp_free_request(req);
-			return;
-		}
-	}
-
 	target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
 			req->sense_buf, unpacked_lun, data_length,
 			MSG_SIMPLE_TAG, data_dir, 0);
@@ -381,10 +347,10 @@ static void sbp_rw_data_worker(struct work_struct *work)
  * DMA_TO_DEVICE = read from initiator (SCSI WRITE)
  * DMA_FROM_DEVICE = write to initiator (SCSI READ)
  */
-int sbp_rw_data(struct sbp_target_request *req, bool sync)
+int sbp_rw_data(struct sbp_target_request *req)
 {
 	struct sbp_session *sess = req->login->sess;
-	int tcode, num_workers, i;
+	int tcode, num_workers, i, ret = 0;
 	struct sbp_rw_data_txn *txn;
 	struct sbp_rw_data_worker *workers;
 
@@ -454,14 +420,6 @@ int sbp_rw_data(struct sbp_target_request *req, bool sync)
 	}
 
 	req->rw_txn = txn;
-
-	return sync ? sbp_rw_data_waitcomplete(req) : 0;
-}
-
-int sbp_rw_data_waitcomplete(struct sbp_target_request *req)
-{
-	struct sbp_rw_data_txn *txn = req->rw_txn;
-	int i, ret = 0;
 
 	for (i = 0; i < txn->num_workers; i++) {
 		flush_work_sync(&txn->workers[i].work);
