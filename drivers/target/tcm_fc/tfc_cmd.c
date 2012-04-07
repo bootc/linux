@@ -247,7 +247,6 @@ static void ft_recv_seq(struct fc_seq *sp, struct fc_frame *fp, void *arg)
 	struct fc_frame_header *fh;
 
 	if (unlikely(IS_ERR(fp))) {
-		struct fc_exch *ep = fc_seq_exch(sp);
 		/* XXX need to find cmd if queued */
 		cmd->seq = NULL;
 		cmd->aborted = true;
