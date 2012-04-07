@@ -158,7 +158,7 @@ static struct se_lun *sbp_get_lun_from_tpg(struct sbp_tpg *tpg, int lun)
 		return ERR_PTR(-EINVAL);
 
 	spin_lock(&se_tpg->tpg_lun_lock);
-	se_lun = &se_tpg->tpg_lun_list[lun];
+	se_lun = se_tpg->tpg_lun_list[lun];
 
 	if (se_lun->lun_status != TRANSPORT_LUN_STATUS_ACTIVE)
 		se_lun = ERR_PTR(-ENODEV);

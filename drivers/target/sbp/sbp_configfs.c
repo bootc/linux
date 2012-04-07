@@ -70,7 +70,7 @@ static int sbp_count_se_tpg_luns(struct se_portal_group *tpg)
 
 	spin_lock(&tpg->tpg_lun_lock);
 	for (i = 0; i < TRANSPORT_MAX_LUNS_PER_TPG; i++) {
-		struct se_lun *se_lun = &tpg->tpg_lun_list[i];
+		struct se_lun *se_lun = tpg->tpg_lun_list[i];
 
 		if (se_lun->lun_status == TRANSPORT_LUN_STATUS_FREE)
 			continue;
@@ -148,7 +148,7 @@ static int sbp_update_unit_directory(struct sbp_tport *tport)
 
 	spin_lock(&tport->tpg->se_tpg.tpg_lun_lock);
 	for (i = 0; i < TRANSPORT_MAX_LUNS_PER_TPG; i++) {
-		struct se_lun *se_lun = &tport->tpg->se_tpg.tpg_lun_list[i];
+		struct se_lun *se_lun = tport->tpg->se_tpg.tpg_lun_list[i];
 		struct se_device *dev;
 		int type;
 
