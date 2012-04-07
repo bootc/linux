@@ -354,6 +354,17 @@ int sbp_rw_data(struct sbp_target_request *req)
 	struct sbp_rw_data_txn *txn;
 	struct sbp_rw_data_worker *workers;
 
+	req->data_buf = kmalloc(req->se_cmd.data_length, GFP_KERNEL);
+	if (!req->data_buf)
+		return -ENOMEM;
+
+	if (req->se_cmd.data_direction == DMA_FROM_DEVICE) {
+		sg_copy_to_buffer(req->se_cmd.t_data_sg,
+				req->se_cmd.t_data_nents,
+				req->data_buf,
+				req->se_cmd.data_length);
+	}
+
 	tcode = (req->se_cmd.data_direction == DMA_TO_DEVICE) ?
 		TCODE_READ_BLOCK_REQUEST :
 		TCODE_WRITE_BLOCK_REQUEST;
@@ -435,6 +446,16 @@ int sbp_rw_data(struct sbp_target_request *req)
 	mutex_destroy(&txn->mutex);
 	kfree(txn->workers);
 	kfree(txn);
+
+	if (req->se_cmd.data_direction == DMA_TO_DEVICE) {
+		sg_copy_from_buffer(req->se_cmd.t_data_sg,
+				req->se_cmd.t_data_nents,
+				req->data_buf,
+				req->se_cmd.data_length);
+	}
+
+	kfree(req->data_buf);
+	req->data_buf = NULL;
 
 	return ret;
 }
