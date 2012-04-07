@@ -31,11 +31,8 @@ struct sbp_target_request {
 	struct se_cmd se_cmd;
 	struct sbp_page_table_entry *pg_tbl;
 	void *cmd_buf;
-	void *data_buf;
 
 	unsigned char sense_buf[TRANSPORT_SENSE_BUFFER];
-
-	struct sbp_rw_data_txn *rw_txn;
 };
 
 struct sbp_target_agent *sbp_target_agent_register(

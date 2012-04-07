@@ -37,8 +37,6 @@
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
 
-struct sbp_rw_data_worker;
-
 struct sbp_rw_data_txn {
 	int max_payload;
 	int pg_size;
@@ -49,25 +47,12 @@ struct sbp_rw_data_txn {
 	int tcode;
 	int speed;
 
-	struct sbp_rw_data_worker *workers;
-	int num_workers;
-
-	struct mutex mutex;		/* protects all members below */
-	int running_workers;
-	unsigned int scale_back : 1;
-
 	struct sbp_page_table_entry *pg_tbl;
 	int num_pte;
 
 	unsigned long long offset;
 	void *payload;
 	int length;
-};
-
-struct sbp_rw_data_worker {
-	struct sbp_rw_data_txn *txn;
-	struct work_struct work;
-	int rcode;
 };
 
 /*
@@ -262,11 +247,6 @@ static inline bool sbp_rw_data_continue(struct sbp_rw_data_txn *txn)
 {
 	struct sbp_page_table_entry *pte;
 
-	if (txn->scale_back) {
-		txn->scale_back = 0;
-		return false;
-	}
-
 	if (txn->length)
 		return true;
 
@@ -284,16 +264,12 @@ static inline bool sbp_rw_data_continue(struct sbp_rw_data_txn *txn)
 	return true;
 }
 
-static void sbp_rw_data_worker(struct work_struct *work)
+static int sbp_rw_data_worker(struct sbp_rw_data_txn *txn)
 {
-	struct sbp_rw_data_worker *worker =
-		container_of(work, struct sbp_rw_data_worker, work);
-	struct sbp_rw_data_txn *txn = worker->txn;
 	unsigned long long offset;
 	void *payload;
-	int length, attempt, delay;
+	int length, attempt, delay, rcode = RCODE_COMPLETE;
 
-	mutex_lock(&txn->mutex);
 	while (sbp_rw_data_continue(txn)) {
 		offset = txn->offset;
 		payload = txn->payload;
@@ -308,39 +284,27 @@ static void sbp_rw_data_worker(struct work_struct *work)
 		txn->offset += length;
 		txn->payload += length;
 
-		mutex_unlock(&txn->mutex);
-
 		pr_debug("worker txn: 0x%p to 0x%08llx len 0x%x\n",
 			payload, offset, length);
 
 		for (attempt = 1; attempt <= 5; attempt++) {
-			worker->rcode = fw_run_transaction(txn->card,
+			rcode = fw_run_transaction(txn->card,
 					txn->tcode, txn->node_id,
 					txn->generation, txn->speed,
 					offset, payload, length);
 
-			if (worker->rcode == RCODE_COMPLETE)
+			if (rcode == RCODE_COMPLETE)
 				break;
-
-			if (worker->rcode == RCODE_BUSY) {
-				mutex_lock(&txn->mutex);
-				if (txn->running_workers > 1)
-					txn->scale_back = 1;
-				mutex_unlock(&txn->mutex);
-			}
 
 			delay = 5 * attempt * attempt;
 			usleep_range(delay, delay * 2);
 		}
 
-		mutex_lock(&txn->mutex);
-
-		if (worker->rcode != RCODE_COMPLETE)
+		if (rcode != RCODE_COMPLETE)
 			break;
 	}
 
-	txn->running_workers--;
-	mutex_unlock(&txn->mutex);
+	return rcode;
 }
 
 /*
@@ -350,9 +314,8 @@ static void sbp_rw_data_worker(struct work_struct *work)
 int sbp_rw_data(struct sbp_target_request *req)
 {
 	struct sbp_session *sess = req->login->sess;
-	int tcode, num_workers, i, ret = 0;
+	int tcode, rcode, ret = 0;
 	struct sbp_rw_data_txn *txn;
-	struct sbp_rw_data_worker *workers;
 	void *data_buf;
 
 	data_buf = kmalloc(req->se_cmd.data_length, GFP_KERNEL);
@@ -376,16 +339,6 @@ int sbp_rw_data(struct sbp_target_request *req)
 
 	txn->max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(
 			be32_to_cpu(req->orb.misc));
-
-	num_workers = min_t(int, 3, DIV_ROUND_UP(req->se_cmd.data_length,
-				txn->max_payload));
-	pr_debug("starting %d workers\n", num_workers);
-
-	workers = kcalloc(num_workers, sizeof(*workers), GFP_KERNEL);
-	if (!workers) {
-		kfree(txn);
-		return -ENOMEM;
-	}
 
 	txn->pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
 	if (txn->pg_size) {
@@ -416,46 +369,24 @@ int sbp_rw_data(struct sbp_target_request *req)
 		txn->length = req->se_cmd.data_length;
 	}
 
-	txn->workers = workers;
-	txn->num_workers = num_workers;
-
-	mutex_init(&txn->mutex);
-	txn->running_workers = num_workers;
-	txn->scale_back = 0;
-
 	txn->payload = data_buf;
 
-	for (i = 0; i < num_workers; i++) {
-		workers[i].txn = txn;
-		INIT_WORK(&workers[i].work, sbp_rw_data_worker);
-		queue_work(system_wq, &workers[i].work);
-	}
+	rcode = sbp_rw_data_worker(txn);
 
-	req->rw_txn = txn;
-
-	for (i = 0; i < txn->num_workers; i++) {
-		flush_work_sync(&txn->workers[i].work);
-		pr_debug("worker complete: 0x%x\n", txn->workers[i].rcode);
-		if (txn->workers[i].rcode != RCODE_COMPLETE)
-			ret = -EIO;
-	}
-
-	WARN_ON(txn->running_workers != 0);
-	WARN_ON(ret == 0 && txn->length != 0);
-
-	fw_card_put(txn->card);
-	mutex_destroy(&txn->mutex);
-	kfree(txn->workers);
-	kfree(txn);
-
-	if (req->se_cmd.data_direction == DMA_TO_DEVICE) {
+	if (rcode != RCODE_COMPLETE) {
+		ret = -EIO;
+	} else if (req->se_cmd.data_direction == DMA_TO_DEVICE) {
 		sg_copy_from_buffer(req->se_cmd.t_data_sg,
 				req->se_cmd.t_data_nents,
 				data_buf,
 				req->se_cmd.data_length);
 	}
 
+	WARN_ON(ret == 0 && txn->length != 0);
+
+	fw_card_put(txn->card);
 	kfree(data_buf);
+	kfree(txn);
 
 	return ret;
 }
@@ -568,6 +499,5 @@ void sbp_free_request(struct sbp_target_request *req)
 {
 	kfree(req->pg_tbl);
 	kfree(req->cmd_buf);
-	kfree(req->data_buf);
 	kfree(req);
 }
