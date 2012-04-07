@@ -182,9 +182,7 @@ int bot_send_read_response(struct usbg_cmd *cmd)
 {
 	struct f_uas *fu = cmd->fu;
 	struct se_cmd *se_cmd = &cmd->se_cmd;
-#if 0
 	struct usb_gadget *gadget = fuas_to_gadget(fu);
-#endif
 	int ret;
 
 	if (!cmd->data_len) {
@@ -193,7 +191,7 @@ int bot_send_read_response(struct usbg_cmd *cmd)
 		return 0;
 	}
 
-	/* if (!gadget->sg_supported) { */
+	if (!gadget->sg_supported) {
 		cmd->data_buf = kmalloc(se_cmd->data_length, GFP_ATOMIC);
 		if (!cmd->data_buf)
 			return -ENOMEM;
@@ -204,13 +202,11 @@ int bot_send_read_response(struct usbg_cmd *cmd)
 				se_cmd->data_length);
 
 		fu->bot_req_in->buf = cmd->data_buf;
-#if 0
 	} else {
 		fu->bot_req_in->buf = NULL;
 		fu->bot_req_in->num_sgs = se_cmd->t_data_nents;
 		fu->bot_req_in->sg = se_cmd->t_data_sg;
 	}
-#endif
 
 	fu->bot_req_in->complete = bot_read_compl;
 	fu->bot_req_in->length = se_cmd->data_length;
@@ -225,9 +221,7 @@ int bot_send_write_request(struct usbg_cmd *cmd)
 {
 	struct f_uas *fu = cmd->fu;
 	struct se_cmd *se_cmd = &cmd->se_cmd;
-#if 0
 	struct usb_gadget *gadget = fuas_to_gadget(fu);
-#endif
 	int ret;
 
 	init_completion(&cmd->write_complete);
@@ -238,19 +232,17 @@ int bot_send_write_request(struct usbg_cmd *cmd)
 		return -EINVAL;
 	}
 
-	/* if (!gadget->sg_supported) { */
+	if (!gadget->sg_supported) {
 		cmd->data_buf = kmalloc(se_cmd->data_length, GFP_KERNEL);
 		if (!cmd->data_buf)
 			return -ENOMEM;
 
 		fu->bot_req_out->buf = cmd->data_buf;
-#if 0
 	} else {
 		fu->bot_req_out->buf = NULL;
 		fu->bot_req_out->num_sgs = se_cmd->t_data_nents;
 		fu->bot_req_out->sg = se_cmd->t_data_sg;
 	}
-#endif
 
 	fu->bot_req_out->complete = usbg_data_write_cmpl;
 	fu->bot_req_out->length = se_cmd->data_length;
