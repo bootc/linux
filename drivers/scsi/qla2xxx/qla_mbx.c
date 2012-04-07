@@ -343,6 +343,8 @@ qla2x00_mailbox_command(scsi_qla_host_t *vha, mbx_cmd_t *mcp)
 
 				set_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags);
 				clear_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+				/* Allow next mbx cmd to come in. */
+				complete(&ha->mbx_cmd_comp);
 				if (ha->isp_ops->abort_isp(vha)) {
 					/* Failed. retry later. */
 					set_bit(ISP_ABORT_NEEDED,
@@ -351,6 +353,7 @@ qla2x00_mailbox_command(scsi_qla_host_t *vha, mbx_cmd_t *mcp)
 				clear_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags);
 				ql_dbg(ql_dbg_mbx, base_vha, 0x101f,
 				    "Finished abort_isp.\n");
+				goto mbx_done;
 			}
 		}
 	}
@@ -359,6 +362,7 @@ premature_exit:
 	/* Allow next mbx cmd to come in. */
 	complete(&ha->mbx_cmd_comp);
 
+mbx_done:
 	if (rval) {
 		ql_dbg(ql_dbg_mbx, base_vha, 0x1020,
 		    "**** Failed mbx[0]=%x, mb[1]=%x, mb[2]=%x, cmd=%x ****.\n",
@@ -1403,9 +1407,9 @@ qla2x00_get_port_database(scsi_qla_host_t *vha, fc_port_t *fcport, uint8_t opt)
 		fcport->d_id.b.rsvd_1 = 0;
 
 		/* If not target must be initiator or unknown type. */
-		if ((pd24->prli_svc_param_word_3[0] & BIT_4))
+		if ((pd->prli_svc_param_word_3[0] & BIT_4))
 			fcport->port_type = FCT_TARGET;
-		else if ((pd24->prli_svc_param_word_3[0] & BIT_5))
+		else if ((pd->prli_svc_param_word_3[0] & BIT_5))
 			fcport->port_type = FCT_INITIATOR;
 
 		/* Passback COS information. */
@@ -2682,7 +2686,8 @@ qla2x00_stop_firmware(scsi_qla_host_t *vha)
 	ql_dbg(ql_dbg_mbx, vha, 0x10a1, "Entered %s.\n", __func__);
 
 	mcp->mb[0] = MBC_STOP_FIRMWARE;
-	mcp->out_mb = MBX_0;
+	mcp->mb[1] = 0;
+	mcp->out_mb = MBX_1|MBX_0;
 	mcp->in_mb = MBX_0;
 	mcp->tov = 5;
 	mcp->flags = 0;
@@ -2988,7 +2993,7 @@ qla24xx_report_id_acquisition(scsi_qla_host_t *vha,
 		if (vp_idx == 0 && (MSB(stat) != 1))
 			goto reg_needed;
 
-		if (MSB(stat) == 1) {
+		if (MSB(stat) != 0) {
 			ql_dbg(ql_dbg_mbx, vha, 0x10ba,
 			    "Could not acquire ID for VP[%d].\n", vp_idx);
 			return;

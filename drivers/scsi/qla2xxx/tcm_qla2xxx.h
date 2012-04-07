@@ -10,7 +10,7 @@
 
 struct tcm_qla2xxx_nacl {
 	/* From libfc struct fc_rport->port_id */
-	u16 nport_id;
+	u32 nport_id;
 	/* Binary World Wide unique Node Name for remote FC Initiator Nport */
 	u64 nport_wwnn;
 	/* ASCII formatted WWPN for FC Initiator Nport */
@@ -139,7 +139,8 @@ extern int tcm_qla2xxx_handle_cmd(struct scsi_qla_host *, struct qla_tgt_cmd *,
 			unsigned char *, uint32_t, int, int, int);
 extern int tcm_qla2xxx_new_cmd_map(struct se_cmd *);
 extern int tcm_qla2xxx_handle_data(struct qla_tgt_cmd *);
-extern int tcm_qla2xxx_handle_tmr(struct qla_tgt_mgmt_cmd *, uint32_t, uint8_t);
+extern int tcm_qla2xxx_handle_tmr(struct qla_tgt_mgmt_cmd *, uint32_t,
+				uint8_t, uint32_t);
 extern int tcm_qla2xxx_queue_data_in(struct se_cmd *);
 extern int tcm_qla2xxx_queue_status(struct se_cmd *);
 extern int tcm_qla2xxx_queue_tm_rsp(struct se_cmd *);

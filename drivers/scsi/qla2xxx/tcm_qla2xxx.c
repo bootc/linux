@@ -387,6 +387,25 @@ u32 tcm_qla2xxx_tpg_get_inst_index(struct se_portal_group *se_tpg)
 	return tpg->lport_tpgt;
 }
 
+static void tcm_qla2xxx_complete_mcmd(struct work_struct *work)
+{
+	struct qla_tgt_mgmt_cmd *mcmd = container_of(work,
+			struct qla_tgt_mgmt_cmd, free_work);
+
+	transport_generic_free_cmd(&mcmd->se_cmd, 0);
+}
+
+/*
+ * Called from qla_target_template->free_mcmd(), and will call
+ * tcm_qla2xxx_release_cmd() via normal struct target_core_fabric_ops
+ * release callback.  qla_hw_data->hardware_lock is expected to be held
+ */
+static void tcm_qla2xxx_free_mcmd(struct qla_tgt_mgmt_cmd *mcmd)
+{
+	INIT_WORK(&mcmd->free_work, tcm_qla2xxx_complete_mcmd);
+	queue_work(tcm_qla2xxx_free_wq, &mcmd->free_work);
+}
+
 static void tcm_qla2xxx_complete_free(struct work_struct *work)
 {
 	struct qla_tgt_cmd *cmd = container_of(work, struct qla_tgt_cmd, work);
@@ -410,17 +429,6 @@ void tcm_qla2xxx_free_cmd(struct qla_tgt_cmd *cmd)
  */
 int tcm_qla2xxx_check_stop_free(struct se_cmd *se_cmd)
 {
-	if (se_cmd->se_cmd_flags & SCF_SCSI_TMR_CDB) {
-		struct qla_tgt_mgmt_cmd *mcmd = container_of(se_cmd,
-				struct qla_tgt_mgmt_cmd, se_cmd);
-		/*
-		 * Release the associated se_cmd->se_tmr_req and se_cmd
-		 * TMR related state now.
-		 */
-		transport_generic_free_cmd(se_cmd, 1);
-		qla_tgt_free_mcmd(mcmd);
-		return 1;
-	}
 	return target_put_sess_cmd(se_cmd->se_sess, se_cmd);
 }
 
@@ -431,8 +439,12 @@ void tcm_qla2xxx_release_cmd(struct se_cmd *se_cmd)
 {
 	struct qla_tgt_cmd *cmd;
 
-	if (se_cmd->se_cmd_flags & SCF_SCSI_TMR_CDB)
+	if (se_cmd->se_cmd_flags & SCF_SCSI_TMR_CDB) {
+		struct qla_tgt_mgmt_cmd *mcmd = container_of(se_cmd,
+				struct qla_tgt_mgmt_cmd, se_cmd);
+		qla_tgt_free_mcmd(mcmd);
 		return;
+	}
 
 	cmd = container_of(se_cmd, struct qla_tgt_cmd, se_cmd);
 	qla_tgt_free_cmd(cmd);
@@ -441,63 +453,32 @@ void tcm_qla2xxx_release_cmd(struct se_cmd *se_cmd)
 int tcm_qla2xxx_shutdown_session(struct se_session *se_sess)
 {
 	struct qla_tgt_sess *sess = se_sess->fabric_sess_ptr;
+	struct scsi_qla_host *vha;
+	unsigned long flags;
 
-	if (!sess) {
-		pr_err("se_sess->fabric_sess_ptr is NULL\n");
-		dump_stack();
-		return 0;
-	}
+	BUG_ON(!sess);
+	vha = sess->vha;
+
+	spin_lock_irqsave(&vha->hw->hardware_lock, flags);
+	sess->tearing_down = 1;
+	target_splice_sess_cmd_list(se_sess);
+	spin_unlock_irqrestore(&vha->hw->hardware_lock, flags);
+
 	return 1;
 }
 
-extern int tcm_qla2xxx_clear_nacl_from_fcport_map(struct se_node_acl *);
-
 void tcm_qla2xxx_close_session(struct se_session *se_sess)
 {
-	struct se_node_acl *se_nacl = se_sess->se_node_acl;
 	struct qla_tgt_sess *sess = se_sess->fabric_sess_ptr;
 	struct scsi_qla_host *vha;
 	unsigned long flags;
 
-	if (!sess) {
-		pr_err("se_sess->fabric_sess_ptr is NULL\n");
-		dump_stack();
-		return;
-	}
+	BUG_ON(!sess);
 	vha = sess->vha;
 
 	spin_lock_irqsave(&vha->hw->hardware_lock, flags);
-	tcm_qla2xxx_clear_nacl_from_fcport_map(se_nacl);
-	__qla_tgt_sess_put(sess);
+	qla_tgt_unreg_sess(sess);
 	spin_unlock_irqrestore(&vha->hw->hardware_lock, flags);
-}
-
-void tcm_qla2xxx_stop_session(struct se_session *se_sess, int sess_sleep , int conn_sleep)
-{
-	struct qla_tgt_sess *sess = se_sess->fabric_sess_ptr;
-	struct scsi_qla_host *vha;
-	unsigned long flags;
-
-	if (!sess) {
-		pr_err("se_sess->fabric_sess_ptr is NULL\n");
-		dump_stack();
-		return;
-	}
-	vha = sess->vha;
-
-	spin_lock_irqsave(&vha->hw->hardware_lock, flags);
-	tcm_qla2xxx_clear_nacl_from_fcport_map(se_sess->se_node_acl);
-	spin_unlock_irqrestore(&vha->hw->hardware_lock, flags);
-}
-
-void tcm_qla2xxx_reset_nexus(struct se_session *se_sess)
-{
-	return;
-}
-
-int tcm_qla2xxx_sess_logged_in(struct se_session *se_sess)
-{
-	return 0;
 }
 
 u32 tcm_qla2xxx_sess_get_index(struct se_session *se_sess)
@@ -536,13 +517,8 @@ int tcm_qla2xxx_write_pending(struct se_cmd *se_cmd)
 
 	cmd->bufflen = se_cmd->data_length;
 	cmd->dma_data_direction = tcm_qla2xxx_mapping_dir(se_cmd);
-
-	/*
-	 * Setup the struct se_task->task_sg[] chained SG list
-	 */
-	transport_do_task_sg_chain(se_cmd);
-	cmd->sg_cnt = se_cmd->t_tasks_sg_chained_no;
-	cmd->sg = se_cmd->t_tasks_sg_chained;
+	cmd->sg_cnt = se_cmd->t_data_nents;
+	cmd->sg = se_cmd->t_data_sg;
 
 	/*
 	 * qla_target.c:qla_tgt_rdy_to_xfer() will call pci_map_sg() to setup
@@ -626,8 +602,7 @@ void tcm_qla2xxx_do_rsp(struct work_struct *work)
 	/*
 	 * Dispatch ->queue_status from workqueue process context
 	 */
-	transport_send_check_condition_and_sense(&cmd->se_cmd,
-				cmd->se_cmd.scsi_sense_reason, 0);
+	transport_generic_request_failure(&cmd->se_cmd);
 }
 
 /*
@@ -669,37 +644,14 @@ int tcm_qla2xxx_handle_data(struct qla_tgt_cmd *cmd)
 /*
  * Called from qla_target.c:qla_tgt_issue_task_mgmt()
  */
-int tcm_qla2xxx_handle_tmr(struct qla_tgt_mgmt_cmd *mcmd, uint32_t lun, uint8_t tmr_func)
+int tcm_qla2xxx_handle_tmr(struct qla_tgt_mgmt_cmd *mcmd, uint32_t lun,
+			uint8_t tmr_func, uint32_t tag)
 {
 	struct qla_tgt_sess *sess = mcmd->sess;
-	struct se_session *se_sess = sess->se_sess;
-	struct se_portal_group *se_tpg = se_sess->se_tpg;
 	struct se_cmd *se_cmd = &mcmd->se_cmd;
-	/*
-	 * Initialize struct se_cmd descriptor from target_core_mod infrastructure
-	 */
-	transport_init_se_cmd(se_cmd, se_tpg->se_tpg_tfo, se_sess, 0,
-				DMA_NONE, 0, NULL);
-	/*
-	 * Initialize the TCM TMR
-	 */
-	core_tmr_req_init(se_cmd, mcmd, tmr_func);
 
-	/*
-	 * Save the se_tmr_req for qla_tgt_xmit_tm_rsp() callback into LLD code
-	 */
-	mcmd->se_tmr_req = &se_cmd->se_tmr_req;
-	/*
-	 * Locate the underlying TCM struct se_lun from sc->device->lun
-	 */
-	if (transport_lookup_tmr_lun(se_cmd, lun) < 0) {
-		transport_generic_free_cmd(se_cmd, 1);
-		return -EINVAL;
-	}
-	/*
-	 * Queue the TMR associated se_cmd into TCM Core for processing
-	 */
-	return transport_generic_handle_tmr(se_cmd);
+	return target_submit_tmr(se_cmd, sess->se_sess, NULL, lun, mcmd,
+			tmr_func, GFP_ATOMIC, tag, TARGET_SCF_ACK_KREF);
 }
 
 int tcm_qla2xxx_queue_data_in(struct se_cmd *se_cmd)
@@ -709,13 +661,8 @@ int tcm_qla2xxx_queue_data_in(struct se_cmd *se_cmd)
 	cmd->bufflen = se_cmd->data_length;
 	cmd->dma_data_direction = tcm_qla2xxx_mapping_dir(se_cmd);
 	cmd->aborted = (se_cmd->transport_state & CMD_T_ABORTED);
-
-	/*
-	 * Setup the struct se_task->task_sg[] chained SG list
-	 */
-	transport_do_task_sg_chain(se_cmd);
-	cmd->sg_cnt = se_cmd->t_tasks_sg_chained_no;
-	cmd->sg = se_cmd->t_tasks_sg_chained;
+	cmd->sg_cnt = se_cmd->t_data_nents;
+	cmd->sg = se_cmd->t_data_sg;
 	cmd->offset = 0;
 
 	/*
@@ -755,7 +702,7 @@ int tcm_qla2xxx_queue_status(struct se_cmd *se_cmd)
 
 int tcm_qla2xxx_queue_tm_rsp(struct se_cmd *se_cmd)
 {
-	struct se_tmr_req *se_tmr = &se_cmd->se_tmr_req;
+	struct se_tmr_req *se_tmr = se_cmd->se_tmr_req;
 	struct qla_tgt_mgmt_cmd *mcmd = container_of(se_cmd,
 				struct qla_tgt_mgmt_cmd, se_cmd);
 
@@ -795,11 +742,6 @@ u16 tcm_qla2xxx_get_fabric_sense_len(void)
 }
 
 u16 tcm_qla2xxx_set_fabric_sense_len(struct se_cmd *se_cmd, u32 sense_length)
-{
-	return 0;
-}
-
-int tcm_qla2xxx_is_state_remove(struct se_cmd *se_cmd)
 {
 	return 0;
 }
@@ -860,7 +802,7 @@ static int tcm_qla2xxx_setup_nacl_from_rport(
 
 		p->se_nacl = se_nacl;
 		pr_debug("Setting p->se_nacl to se_nacl: %p for WWNN: 0x%016LX,"
-			" port_id: 0x%04x\n", se_nacl, rport_wwnn,
+			" port_id: 0x%08x\n", se_nacl, rport_wwnn,
 			nacl->nport_id);
 		spin_unlock_irqrestore(&vha->hw->hardware_lock, flags);
 
@@ -874,9 +816,9 @@ static int tcm_qla2xxx_setup_nacl_from_rport(
 /*
  * Expected to be called with struct qla_hw_data->hardware_lock held
  */
-int tcm_qla2xxx_clear_nacl_from_fcport_map(
-	struct se_node_acl *se_nacl)
+void tcm_qla2xxx_clear_nacl_from_fcport_map(struct qla_tgt_sess *sess)
 {
+	struct se_node_acl *se_nacl = sess->se_sess->se_node_acl;
 	struct se_portal_group *se_tpg = se_nacl->se_tpg;
 	struct se_wwn *se_wwn = se_tpg->se_tpg_wwn;
 	struct tcm_qla2xxx_lport *lport = container_of(se_wwn,
@@ -904,10 +846,13 @@ int tcm_qla2xxx_clear_nacl_from_fcport_map(
 
 	p->se_nacl = NULL;
 	pr_debug("Clearing p->se_nacl to se_nacl: %p for WWNN: 0x%016LX,"
-		" port_id: 0x%04x\n", se_nacl, nacl->nport_wwnn,
+		" port_id: 0x%08x\n", se_nacl, nacl->nport_wwnn,
 		nacl->nport_id);
+}
 
-	return 0;
+void tcm_qla2xxx_put_sess(struct qla_tgt_sess *sess)
+{
+	target_put_session(sess->se_sess);
 }
 
 static struct se_node_acl *tcm_qla2xxx_make_nodeacl(
@@ -1472,6 +1417,9 @@ static void tcm_qla2xxx_free_session(struct qla_tgt_sess *sess)
 	struct tcm_qla2xxx_lport *lport;
 	struct tcm_qla2xxx_nacl *nacl;
 	unsigned char be_sid[3];
+	unsigned long flags;
+
+	BUG_ON(in_interrupt());
 
 	se_sess = sess->se_sess;
 	if (!se_sess) {
@@ -1488,20 +1436,7 @@ static void tcm_qla2xxx_free_session(struct qla_tgt_sess *sess)
 		dump_stack();
 		return;
 	}
-
-	target_splice_sess_cmd_list(se_sess);
-	spin_unlock_irq(&ha->hardware_lock);
-
 	target_wait_for_sess_cmds(se_sess, 0);
-
-	spin_lock_irq(&ha->hardware_lock);
-
-
-	/*
-	 * Now clear the struct se_node_acl->nacl_sess pointer
-	 */
-	transport_deregister_session_configfs(sess->se_sess);
-
         /*
          * And now clear the se_nacl and session pointers from our HW lport
          * mappings for fabric S_ID and LOOP_ID.
@@ -1511,13 +1446,14 @@ static void tcm_qla2xxx_free_session(struct qla_tgt_sess *sess)
 	be_sid[1] = sess->s_id.b.area;
 	be_sid[2] = sess->s_id.b.al_pa;
 
-        tcm_qla2xxx_set_sess_by_s_id(lport, NULL, nacl, se_sess,
-                        sess, be_sid);
-        tcm_qla2xxx_set_sess_by_loop_id(lport, NULL, nacl, se_sess,
-                        sess, sess->loop_id);
-	/*
-	 * Release the FC nexus -> target se_session link now.
-	 */
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+	tcm_qla2xxx_set_sess_by_s_id(lport, NULL, nacl, se_sess,
+			sess, be_sid);
+	tcm_qla2xxx_set_sess_by_loop_id(lport, NULL, nacl, se_sess,
+			sess, sess->loop_id);
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	transport_deregister_session_configfs(sess->se_sess);
 	transport_deregister_session(sess->se_sess);
 }
 
@@ -1609,10 +1545,13 @@ static struct qla_tgt_func_tmpl tcm_qla2xxx_template = {
 	.handle_data		= tcm_qla2xxx_handle_data,
 	.handle_tmr		= tcm_qla2xxx_handle_tmr,
 	.free_cmd		= tcm_qla2xxx_free_cmd,
+	.free_mcmd		= tcm_qla2xxx_free_mcmd,
 	.free_session		= tcm_qla2xxx_free_session,
 	.check_initiator_node_acl = tcm_qla2xxx_check_initiator_node_acl,
 	.find_sess_by_s_id	= tcm_qla2xxx_find_sess_by_s_id,
 	.find_sess_by_loop_id	= tcm_qla2xxx_find_sess_by_loop_id,
+	.clear_nacl_from_fcport_map = tcm_qla2xxx_clear_nacl_from_fcport_map,
+	.put_sess		= tcm_qla2xxx_put_sess,
 };
 
 static int tcm_qla2xxx_init_lport(struct tcm_qla2xxx_lport *lport)
@@ -1807,9 +1746,6 @@ static struct target_core_fabric_ops tcm_qla2xxx_ops = {
 	.release_cmd			= tcm_qla2xxx_release_cmd,
 	.shutdown_session		= tcm_qla2xxx_shutdown_session,
 	.close_session			= tcm_qla2xxx_close_session,
-	.stop_session			= tcm_qla2xxx_stop_session,
-	.fall_back_to_erl0		= tcm_qla2xxx_reset_nexus,
-	.sess_logged_in			= tcm_qla2xxx_sess_logged_in,
 	.sess_get_index			= tcm_qla2xxx_sess_get_index,
 	.sess_get_initiator_sid		= NULL,
 	.write_pending			= tcm_qla2xxx_write_pending,
@@ -1822,7 +1758,6 @@ static struct target_core_fabric_ops tcm_qla2xxx_ops = {
 	.queue_tm_rsp			= tcm_qla2xxx_queue_tm_rsp,
 	.get_fabric_sense_len		= tcm_qla2xxx_get_fabric_sense_len,
 	.set_fabric_sense_len		= tcm_qla2xxx_set_fabric_sense_len,
-	.is_state_remove		= tcm_qla2xxx_is_state_remove,
 	/*
 	 * Setup function pointers for generic logic in target_core_fabric_configfs.c
 	 */
@@ -1858,9 +1793,6 @@ static struct target_core_fabric_ops tcm_qla2xxx_npiv_ops = {
 	.release_cmd			= tcm_qla2xxx_release_cmd,
 	.shutdown_session		= tcm_qla2xxx_shutdown_session,
 	.close_session			= tcm_qla2xxx_close_session,
-	.stop_session			= tcm_qla2xxx_stop_session,
-	.fall_back_to_erl0		= tcm_qla2xxx_reset_nexus,
-	.sess_logged_in			= tcm_qla2xxx_sess_logged_in,
 	.sess_get_index			= tcm_qla2xxx_sess_get_index,
 	.sess_get_initiator_sid		= NULL,
 	.write_pending			= tcm_qla2xxx_write_pending,
@@ -1873,7 +1805,6 @@ static struct target_core_fabric_ops tcm_qla2xxx_npiv_ops = {
 	.queue_tm_rsp			= tcm_qla2xxx_queue_tm_rsp,
 	.get_fabric_sense_len		= tcm_qla2xxx_get_fabric_sense_len,
 	.set_fabric_sense_len		= tcm_qla2xxx_set_fabric_sense_len,
-	.is_state_remove		= tcm_qla2xxx_is_state_remove,
 	/*
 	 * Setup function pointers for generic logic in target_core_fabric_configfs.c
 	 */
@@ -1909,10 +1840,7 @@ static int tcm_qla2xxx_register_configfs(void)
 	 * Setup fabric->tf_ops from our local tcm_qla2xxx_ops
 	 */
 	fabric->tf_ops = tcm_qla2xxx_ops;
-	/*
-	 * Setup the struct se_task->task_sg[] chaining bit
-	 */
-	fabric->tf_ops.task_sg_chaining = 1;
+
 	/*
 	 * Setup default attribute lists for various fabric->tf_cit_tmpl
 	 */
@@ -1944,9 +1872,9 @@ static int tcm_qla2xxx_register_configfs(void)
 	 * Register the top level struct config_item_type for NPIV with TCM core
 	 */
 	npiv_fabric = target_fabric_configfs_init(THIS_MODULE, "qla2xxx_npiv");
-	if (!npiv_fabric) {
+	if (IS_ERR(npiv_fabric)) {
 		pr_err("target_fabric_configfs_init() failed\n");
-		ret = -ENOMEM;
+		ret = PTR_ERR(npiv_fabric);
 		goto out_fabric;
 	}
 	/*

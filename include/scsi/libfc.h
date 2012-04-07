@@ -569,7 +569,6 @@ struct libfc_function_template {
 			     void *arg);
 
 	/*
->>>>>>> 0ce790e7d736cedc563e1fb4e998babf5a4dbc3d
 	 * Assign a sequence for an incoming request frame.
 	 *
 	 * STATUS: OPTIONAL
@@ -858,7 +857,7 @@ struct fc_lport {
 	enum fc_lport_state	       state;
 	unsigned long		       boot_time;
 	struct fc_host_statistics      host_stats;
-	struct fcoe_dev_stats	       *dev_stats;
+	struct fcoe_dev_stats __percpu *dev_stats;
 	u8			       retry_count;
 
 	/* Fabric information */

@@ -182,7 +182,7 @@ static int virtscsi_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *sc)
 	virtscsi_map_cmd(vscsi, sc, cmd, &out_num, &in_num);
 
 	if (virtqueue_add_buf(vscsi->cmd_vq, vscsi->sg,
-				out_num, in_num, cmd) >= 0) {
+				out_num, in_num, cmd, GFP_ATOMIC) >= 0) {
 		virtqueue_kick(vscsi->cmd_vq); /* TODO is there a way to batch commands? */
 		ret = 0;
 	}

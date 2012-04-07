@@ -193,9 +193,6 @@ int usbg_cmd_queue_supported(struct se_cmd *se_cmd);
 void usbg_release_cmd(struct se_cmd *);
 int usbg_shutdown_session(struct se_session *);
 void usbg_close_session(struct se_session *);
-void usbg_stop_session(struct se_session *, int, int);
-void usbg_reset_nexus(struct se_session *);
-int usbg_sess_logged_in(struct se_session *);
 u32 usbg_sess_get_index(struct se_session *);
 int usbg_write_pending(struct se_cmd *);
 int usbg_write_pending_status(struct se_cmd *);
@@ -205,6 +202,5 @@ int usbg_get_cmd_state(struct se_cmd *);
 int usbg_queue_tm_rsp(struct se_cmd *);
 u16 usbg_set_fabric_sense_len(struct se_cmd *, u32);
 u16 usbg_get_fabric_sense_len(void);
-int usbg_is_state_remove(struct se_cmd *);
 
 #endif

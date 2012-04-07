@@ -193,7 +193,6 @@ extern void qla24xx_build_scsi_iocbs(srb_t *, struct cmd_type_7 *, uint16_t);
 extern int qla24xx_dif_start_scsi(srb_t *);
 
 extern void *qla2x00_alloc_iocbs(scsi_qla_host_t *, srb_t *);
-extern void qla2x00_isp_cmd(struct scsi_qla_host *, struct req_que *);
 extern int qla2x00_issue_marker(scsi_qla_host_t *, int);
 
 /*
@@ -548,6 +547,7 @@ extern int qla82xx_restart_isp(scsi_qla_host_t *);
 
 /* IOCB related functions */
 extern int qla82xx_start_scsi(srb_t *);
+extern void qla2x00_start_iocbs(struct scsi_qla_host *, struct req_que *);
 
 /* Interrupt related */
 extern irqreturn_t qla82xx_intr_handler(int, void *);
@@ -579,7 +579,7 @@ extern void qla2x00_set_model_info(scsi_qla_host_t *, uint8_t *,
     size_t, char *);
 extern int qla82xx_mbx_intr_enable(scsi_qla_host_t *);
 extern int qla82xx_mbx_intr_disable(scsi_qla_host_t *);
-extern void qla82xx_start_iocbs(srb_t *);
+extern void qla82xx_start_iocbs(scsi_qla_host_t *);
 extern int qla82xx_fcoe_ctx_reset(scsi_qla_host_t *);
 extern int qla82xx_check_md_needed(scsi_qla_host_t *);
 extern void qla82xx_chip_reset_cleanup(scsi_qla_host_t *);

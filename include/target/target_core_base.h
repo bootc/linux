@@ -72,9 +72,8 @@
 /*
  * struct se_device->dev_flags
  */
-#define DF_READ_ONLY				0x00000001
-#define DF_SPC2_RESERVATIONS			0x00000002
-#define DF_SPC2_RESERVATIONS_WITH_ISID		0x00000004
+#define DF_SPC2_RESERVATIONS			0x00000001
+#define DF_SPC2_RESERVATIONS_WITH_ISID		0x00000002
 
 /* struct se_dev_attrib sanity values */
 /* Default max_unmap_lba_count */
@@ -85,6 +84,8 @@
 #define DA_UNMAP_GRANULARITY_DEFAULT		0
 /* Default unmap_granularity_alignment */
 #define DA_UNMAP_GRANULARITY_ALIGNMENT_DEFAULT	0
+/* Default max transfer length */
+#define DA_FABRIC_MAX_SECTORS			8192
 /* Emulation for Direct Page Out */
 #define DA_EMULATE_DPO				0
 /* Emulation for Forced Unit Access WRITEs */
@@ -111,14 +112,14 @@
 /* Enforce SCSI Initiator Port TransportID with 'ISID' for PR */
 #define DA_ENFORCE_PR_ISIDS			1
 #define DA_STATUS_MAX_SECTORS_MIN		16
-#define DA_STATUS_MAX_SECTORS_MAX		8192
+#define DA_STATUS_MAX_SECTORS_MAX		UINT_MAX
 /* By default don't report non-rotating (solid state) medium */
 #define DA_IS_NONROT				0
 /* Queue Algorithm Modifier default for restricted reordering in control mode page */
 #define DA_EMULATE_REST_REORD			0
 
+#define SE_INQUIRY_BUF				512
 #define SE_MODE_PAGE_BUF			512
-
 
 /* struct se_hba->hba_flags */
 enum hba_flags_table {
@@ -183,7 +184,8 @@ enum se_cmd_flags_table {
 	SCF_ALUA_NON_OPTIMIZED		= 0x00040000,
 	SCF_DELAYED_CMD_FROM_SAM_ATTR	= 0x00080000,
 	SCF_UNUSED			= 0x00100000,
-	SCF_PASSTHROUGH_SG_TO_MEM_NOALLOC = 0x00400000,
+	SCF_PASSTHROUGH_SG_TO_MEM_NOALLOC = 0x00200000,
+	SCF_ACK_KREF			= 0x00400000,
 };
 
 /* struct se_dev_entry->lun_flags and struct se_lun->lun_access */
@@ -251,7 +253,7 @@ enum tcm_tmrsp_table {
 	TMR_TASK_DOES_NOT_EXIST		= 1,
 	TMR_LUN_DOES_NOT_EXIST		= 2,
 	TMR_TASK_STILL_ALLEGIANT	= 3,
-	TMR_TASK_FAILOVER_NOT_SUPPORTED = 4,
+	TMR_TASK_FAILOVER_NOT_SUPPORTED	= 4,
 	TMR_TASK_MGMT_FUNCTION_NOT_SUPPORTED	= 5,
 	TMR_FUNCTION_AUTHORIZATION_FAILED = 6,
 	TMR_FUNCTION_REJECTED		= 255,
@@ -557,7 +559,7 @@ struct se_cmd {
 	struct se_lun		*se_lun;
 	/* Only used for internal passthrough and legacy TCM fabric modules */
 	struct se_session	*se_sess;
-	struct se_tmr_req	se_tmr_req;
+	struct se_tmr_req	*se_tmr_req;
 	struct list_head	se_queue_node;
 	struct list_head	se_cmd_list;
 	struct completion	cmd_wait_comp;
@@ -569,7 +571,6 @@ struct se_cmd {
 	unsigned char		*t_task_cdb;
 	unsigned char		__t_task_cdb[TCM_MAX_COMMAND_SIZE];
 	unsigned long long	t_task_lba;
-	u32			t_tasks_sg_chained_no;
 	atomic_t		t_fe_count;
 	atomic_t		t_se_count;
 	atomic_t		t_task_cdbs_left;
@@ -590,7 +591,6 @@ struct se_cmd {
 	struct completion	t_transport_stop_comp;
 	struct completion	transport_lun_fe_stop_comp;
 	struct completion	transport_lun_stop_comp;
-	struct scatterlist	*t_tasks_sg_chained;
 
 	struct work_struct	work;
 
@@ -618,6 +618,7 @@ struct se_node_acl {
 	char			initiatorname[TRANSPORT_IQN_LEN];
 	/* Used to signal demo mode created ACL, disabled by default */
 	bool			dynamic_node_acl;
+	bool			acl_stop:1;
 	u32			queue_depth;
 	u32			acl_index;
 	u64			num_cmds;
@@ -626,7 +627,7 @@ struct se_node_acl {
 	spinlock_t		stats_lock;
 	/* Used for PR SPEC_I_PT=1 and REGISTER_AND_MOVE */
 	atomic_t		acl_pr_ref_count;
-	struct se_dev_entry	*device_list;
+	struct se_dev_entry	**device_list;
 	struct se_session	*nacl_sess;
 	struct se_portal_group *se_tpg;
 	spinlock_t		device_list_lock;
@@ -639,6 +640,8 @@ struct se_node_acl {
 	struct config_group	*acl_default_groups[5];
 	struct list_head	acl_list;
 	struct list_head	acl_sess_list;
+	struct completion	acl_free_comp;
+	struct kref		acl_kref;
 };
 
 struct se_session {
@@ -652,6 +655,7 @@ struct se_session {
 	struct list_head	sess_cmd_list;
 	struct list_head	sess_wait_list;
 	spinlock_t		sess_cmd_lock;
+	struct kref		sess_kref;
 };
 
 struct se_device;
@@ -726,6 +730,7 @@ struct se_dev_attrib {
 	u32		block_size;
 	u32		hw_max_sectors;
 	u32		max_sectors;
+	u32		fabric_max_sectors;
 	u32		optimal_sectors;
 	u32		hw_queue_depth;
 	u32		queue_depth;
@@ -927,7 +932,7 @@ struct se_portal_group {
 	struct list_head	se_tpg_node;
 	/* linked list for initiator ACL list */
 	struct list_head	acl_node_list;
-	struct se_lun		*tpg_lun_list;
+	struct se_lun		**tpg_lun_list;
 	struct se_lun		tpg_virt_lun0;
 	/* List of TCM sessions associated wth this TPG */
 	struct list_head	tpg_sess_list;

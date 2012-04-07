@@ -440,9 +440,6 @@ static struct target_core_fabric_ops usbg_ops = {
 	.release_cmd			= usbg_release_cmd,
 	.shutdown_session		= usbg_shutdown_session,
 	.close_session			= usbg_close_session,
-	.stop_session			= usbg_stop_session,
-	.fall_back_to_erl0		= usbg_reset_nexus,
-	.sess_logged_in			= usbg_sess_logged_in,
 	.sess_get_index			= usbg_sess_get_index,
 	.sess_get_initiator_sid		= NULL,
 	.write_pending			= usbg_send_write_request,
@@ -455,7 +452,6 @@ static struct target_core_fabric_ops usbg_ops = {
 	.queue_tm_rsp			= usbg_queue_tm_rsp,
 	.get_fabric_sense_len		= usbg_get_fabric_sense_len,
 	.set_fabric_sense_len		= usbg_set_fabric_sense_len,
-	.is_state_remove		= usbg_is_state_remove,
 	.check_stop_free		= usbg_check_stop_free,
 
 	.fabric_make_wwn		= usbg_make_tport,

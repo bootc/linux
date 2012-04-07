@@ -122,6 +122,7 @@ struct ft_cmd {
 	/* Local sense buffer */
 	unsigned char ft_sense_buffer[TRANSPORT_SENSE_BUFFER];
 	u32 was_ddp_setup:1;		/* Set only if ddp is setup */
+	u32 aborted:1;			/* Set if aborted by reset or timeout */
 	struct scatterlist *sg;		/* Set only if DDP is setup */
 	u32 sg_cnt;			/* No. of item in scatterlist */
 };
@@ -141,11 +142,8 @@ extern struct target_fabric_configfs *ft_configfs;
 void ft_sess_put(struct ft_sess *);
 int ft_sess_shutdown(struct se_session *);
 void ft_sess_close(struct se_session *);
-void ft_sess_stop(struct se_session *, int, int);
-int ft_sess_logged_in(struct se_session *);
 u32 ft_sess_get_index(struct se_session *);
 u32 ft_sess_get_port_name(struct se_session *, unsigned char *, u32);
-void ft_sess_set_erl0(struct se_session *);
 
 void ft_lport_add(struct fc_lport *, void *);
 void ft_lport_del(struct fc_lport *, void *);
@@ -163,7 +161,6 @@ int ft_write_pending_status(struct se_cmd *);
 u32 ft_get_task_tag(struct se_cmd *);
 int ft_get_cmd_state(struct se_cmd *);
 int ft_queue_tm_resp(struct se_cmd *);
-int ft_is_state_remove(struct se_cmd *);
 
 /*
  * other internal functions.

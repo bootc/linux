@@ -57,13 +57,11 @@ static void uasp_status_data_cmpl(struct usb_ep *ep, struct usb_request *req);
 static int uasp_prepare_r_request(struct usbg_cmd *cmd)
 {
 	struct se_cmd *se_cmd = &cmd->se_cmd;
-#if 0
 	struct f_uas *fu = cmd->fu;
 	struct usb_gadget *gadget = fuas_to_gadget(fu);
-#endif
 	struct uas_stream *stream = cmd->stream;
 
-	/* if (!gadget->sg_supported) { */
+	if (!gadget->sg_supported) {
 		cmd->data_buf = kmalloc(se_cmd->data_length, GFP_ATOMIC);
 		if (!cmd->data_buf)
 			return -ENOMEM;
@@ -74,13 +72,11 @@ static int uasp_prepare_r_request(struct usbg_cmd *cmd)
 				se_cmd->data_length);
 
 		stream->req_in->buf = cmd->data_buf;
-#if 0
 	} else {
 		stream->req_in->buf = NULL;
 		stream->req_in->num_sgs = se_cmd->t_data_nents;
 		stream->req_in->sg = se_cmd->t_data_sg;
 	}
-#endif
 
 	stream->req_in->complete = uasp_status_data_cmpl;
 	stream->req_in->length = se_cmd->data_length;

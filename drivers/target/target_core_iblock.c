@@ -103,7 +103,6 @@ static struct se_device *iblock_create_virtdevice(
 		return ERR_PTR(ret);
 	}
 	memset(&dev_limits, 0, sizeof(struct se_dev_limits));
-
 	ib_dev->ibd_bio_set = bioset_create(IBLOCK_BIO_POOL_SIZE, 0);
 	if (!ib_dev->ibd_bio_set) {
 		pr_err("IBLOCK: Unable to create bioset()\n");
@@ -462,6 +461,13 @@ iblock_get_bio(struct se_task *task, sector_t lba, u32 sg_num)
 	struct iblock_dev *ib_dev = task->task_se_cmd->se_dev->dev_ptr;
 	struct iblock_req *ib_req = IBLOCK_REQ(task);
 	struct bio *bio;
+
+	/*
+	 * Only allocate as many vector entries as the bio code allows us to,
+	 * we'll loop later on until we have handled the whole request.
+	 */
+	if (sg_num > BIO_MAX_PAGES)
+		sg_num = BIO_MAX_PAGES;
 
 	bio = bio_alloc_bioset(GFP_NOIO, sg_num, ib_dev->ibd_bio_set);
 	if (!bio) {

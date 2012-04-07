@@ -417,7 +417,6 @@ static int ibmvscsis_queue_status(struct se_cmd *se_cmd);
 static int ibmvscsis_check_stop_free(struct se_cmd *se_cmd);
 
 static struct target_core_fabric_ops ibmvscsis_ops = {
-	.task_sg_chaining		= 1,
 	.get_fabric_name		= ibmvscsis_get_fabric_name,
 	.get_fabric_proto_ident		= ibmvscsis_get_fabric_proto_ident,
 	.tpg_get_wwn			= ibmvscsis_get_fabric_wwn,
@@ -871,7 +870,7 @@ static int tcm_queuecommand(struct ibmvscsis_adapter *adapter,
 	/*
 	 * Allocate the necessary tasks to complete the received CDB+data
 	 */
-	ret = transport_generic_allocate_tasks(se_cmd, scmd->cdb);
+	ret = target_setup_cmd_from_cdb(se_cmd, scmd->cdb);
 	if (ret == -ENOMEM) {
 		transport_send_check_condition_and_sense(se_cmd,
 				TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE, 0);
@@ -1223,11 +1222,8 @@ static int ibmvscsis_write_pending(struct se_cmd *se_cmd)
 	int ret;
 
 	sc->sdb.length = se_cmd->data_length;
-
-	transport_do_task_sg_chain(se_cmd);
-
-	sc->sdb.table.nents = se_cmd->t_tasks_sg_chained_no;
-	sc->sdb.table.sgl = se_cmd->t_tasks_sg_chained;
+	sc->sdb.table.nents = se_cmd->t_data_nents;
+	sc->sdb.table.sgl = se_cmd->t_data_sg;
 
 	ret = srp_transfer_data(sc, &vio_iu(iue)->srp.cmd,
 				ibmvscsis_rdma, 1, 1);
@@ -1255,14 +1251,8 @@ static int ibmvscsis_queue_data_in(struct se_cmd *se_cmd)
 		scsi_set_resid(sc, se_cmd->residual_count);
 
 	sc->sdb.length = se_cmd->data_length;
-
-	/*
-	 * Setup the struct se_task->task_sg[] chained SG list
-	 */
-	transport_do_task_sg_chain(se_cmd);
-
-	sc->sdb.table.nents = se_cmd->t_tasks_sg_chained_no;
-	sc->sdb.table.sgl = se_cmd->t_tasks_sg_chained;
+	sc->sdb.table.nents = se_cmd->t_data_nents;
+	sc->sdb.table.sgl = se_cmd->t_data_sg;
 
 	/*
 	 * This will call srp_transfer_data() and post the response

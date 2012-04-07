@@ -232,6 +232,7 @@ struct qla2xxx_fw_dump {
 };
 
 #define QL_MSGHDR "qla2xxx"
+#define QL_DBG_DEFAULT1_MASK    0x1e400000
 
 #define ql_log_fatal		0 /* display fatal errors */
 #define ql_log_warn		1 /* display critical errors */
@@ -244,15 +245,15 @@ struct qla2xxx_fw_dump {
 
 extern int ql_errlev;
 
-void
-ql_dbg(uint32_t, scsi_qla_host_t *vha, int32_t, char *, ...);
-void
-ql_dbg_pci(uint32_t, struct pci_dev *pdev, int32_t, char *, ...);
+void __attribute__((format (printf, 4, 5)))
+ql_dbg(uint32_t, scsi_qla_host_t *vha, int32_t, const char *fmt, ...);
+void __attribute__((format (printf, 4, 5)))
+ql_dbg_pci(uint32_t, struct pci_dev *pdev, int32_t, const char *fmt, ...);
 
-void
-ql_log(uint32_t, scsi_qla_host_t *vha, int32_t, char *, ...);
-void
-ql_log_pci(uint32_t, struct pci_dev *pdev, int32_t, char *, ...);
+void __attribute__((format (printf, 4, 5)))
+ql_log(uint32_t, scsi_qla_host_t *vha, int32_t, const char *fmt, ...);
+void __attribute__((format (printf, 4, 5)))
+ql_log_pci(uint32_t, struct pci_dev *pdev, int32_t, const char *fmt, ...);
 
 /* Debug Levels */
 /* The 0x40000000 is the max value any debug level can have
@@ -280,5 +281,3 @@ ql_log_pci(uint32_t, struct pci_dev *pdev, int32_t, char *, ...);
 #define ql_dbg_tgt_pkt	0x00002000 /* Target mode SCSI packets */
 #define ql_dbg_tgt_sgl	0x00001000 /* Target mode scatterlists */
 #define ql_dbg_tgt_tmr	0x00000800 /* Target mode task management */
-
-#define QL_DBG_BUF_LEN	512

@@ -195,6 +195,7 @@ static void usbg_cmd_work(struct work_struct *work)
 
 		transport_send_check_condition_and_sense(se_cmd,
 				TCM_UNSUPPORTED_SCSI_OPCODE, 1);
+		usbg_cleanup_cmd(cmd);
 		return;
 	}
 
@@ -306,6 +307,7 @@ static void bot_cmd_work(struct work_struct *work)
 
 		transport_send_check_condition_and_sense(se_cmd,
 				TCM_UNSUPPORTED_SCSI_OPCODE, 1);
+		usbg_cleanup_cmd(cmd);
 		return;
 	}
 
@@ -529,7 +531,7 @@ int usbg_new_cmd(struct se_cmd *se_cmd)
 			se_cmd);
 	int ret;
 
-	ret = transport_generic_allocate_tasks(se_cmd, cmd->cmd_buf);
+	ret = target_setup_cmd_from_cdb(se_cmd, cmd->cmd_buf);
 	if (ret)
 		return ret;
 
@@ -567,16 +569,6 @@ void usbg_stop_session(struct se_session *se_sess, int sess_sleep,
 		int conn_sleep)
 {
 	return;
-}
-
-void usbg_reset_nexus(struct se_session *se_sess)
-{
-	return;
-}
-
-int usbg_sess_logged_in(struct se_session *se_sess)
-{
-	return 0;
 }
 
 u32 usbg_sess_get_index(struct se_session *se_sess)
@@ -625,11 +617,6 @@ u16 usbg_set_fabric_sense_len(struct se_cmd *se_cmd, u32 sense_length)
 }
 
 u16 usbg_get_fabric_sense_len(void)
-{
-	return 0;
-}
-
-int usbg_is_state_remove(struct se_cmd *se_cmd)
 {
 	return 0;
 }

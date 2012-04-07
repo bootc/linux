@@ -518,9 +518,6 @@ static struct target_core_fabric_ops tcm_vhost_ops = {
 	.release_cmd			= tcm_vhost_release_cmd,
 	.shutdown_session		= tcm_vhost_shutdown_session,
 	.close_session			= tcm_vhost_close_session,
-	.stop_session			= tcm_vhost_stop_session,
-	.fall_back_to_erl0		= tcm_vhost_reset_nexus,
-	.sess_logged_in			= tcm_vhost_sess_logged_in,
 	.sess_get_index			= tcm_vhost_sess_get_index,
 	.sess_get_initiator_sid		= NULL,
 	.write_pending			= tcm_vhost_write_pending,
@@ -533,7 +530,6 @@ static struct target_core_fabric_ops tcm_vhost_ops = {
 	.queue_tm_rsp			= tcm_vhost_queue_tm_rsp,
 	.get_fabric_sense_len		= tcm_vhost_get_fabric_sense_len,
 	.set_fabric_sense_len		= tcm_vhost_set_fabric_sense_len,
-	.is_state_remove		= tcm_vhost_is_state_remove,
 	/*
 	 * Setup function pointers for generic logic in target_core_fabric_configfs.c
 	 */

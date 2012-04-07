@@ -235,7 +235,7 @@ int tcm_vhost_new_cmd_map(struct se_cmd *se_cmd)
 	/*
 	 * Allocate the necessary tasks to complete the received CDB+data
 	 */
-	ret = transport_generic_allocate_tasks(se_cmd, tv_cmd->tvc_cdb);
+	ret = target_setup_cmd_from_cdb(se_cmd, tv_cmd->tvc_cdb);
 	if (ret != 0)
 		return ret;
 	/*
@@ -281,21 +281,6 @@ int tcm_vhost_shutdown_session(struct se_session *se_sess)
 void tcm_vhost_close_session(struct se_session *se_sess)
 {
 	return;
-}
-
-void tcm_vhost_stop_session(struct se_session *se_sess, int sess_sleep , int conn_sleep)
-{
-	return;
-}
-
-void tcm_vhost_reset_nexus(struct se_session *se_sess)
-{
-	return;
-}
-
-int tcm_vhost_sess_logged_in(struct se_session *se_sess)
-{
-	return 0;
 }
 
 u32 tcm_vhost_sess_get_index(struct se_session *se_sess)
@@ -357,11 +342,6 @@ u16 tcm_vhost_set_fabric_sense_len(struct se_cmd *se_cmd, u32 sense_length)
 }
 
 u16 tcm_vhost_get_fabric_sense_len(void)
-{
-	return 0;
-}
-
-int tcm_vhost_is_state_remove(struct se_cmd *se_cmd)
 {
 	return 0;
 }
