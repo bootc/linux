@@ -264,49 +264,6 @@ static inline bool sbp_rw_data_continue(struct sbp_rw_data_txn *txn)
 	return true;
 }
 
-static int sbp_rw_data_worker(struct sbp_rw_data_txn *txn)
-{
-	unsigned long long offset;
-	void *payload;
-	int length, attempt, delay, rcode = RCODE_COMPLETE;
-
-	while (sbp_rw_data_continue(txn)) {
-		offset = txn->offset;
-		payload = txn->payload;
-		length = txn->length;
-
-		if (length > txn->max_payload)
-			length = txn->max_payload;
-
-		/* FIXME: take page_size into account */
-
-		txn->length -= length;
-		txn->offset += length;
-		txn->payload += length;
-
-		pr_debug("worker txn: 0x%p to 0x%08llx len 0x%x\n",
-			payload, offset, length);
-
-		for (attempt = 1; attempt <= 5; attempt++) {
-			rcode = fw_run_transaction(txn->card,
-					txn->tcode, txn->node_id,
-					txn->generation, txn->speed,
-					offset, payload, length);
-
-			if (rcode == RCODE_COMPLETE)
-				break;
-
-			delay = 5 * attempt * attempt;
-			usleep_range(delay, delay * 2);
-		}
-
-		if (rcode != RCODE_COMPLETE)
-			break;
-	}
-
-	return rcode;
-}
-
 /*
  * DMA_TO_DEVICE = read from initiator (SCSI WRITE)
  * DMA_FROM_DEVICE = write to initiator (SCSI READ)
@@ -314,7 +271,7 @@ static int sbp_rw_data_worker(struct sbp_rw_data_txn *txn)
 int sbp_rw_data(struct sbp_target_request *req)
 {
 	struct sbp_session *sess = req->login->sess;
-	int tcode, rcode, ret = 0;
+	int tcode, rcode = RCODE_COMPLETE, ret = 0;
 	struct sbp_rw_data_txn *txn;
 	void *data_buf;
 
@@ -371,7 +328,31 @@ int sbp_rw_data(struct sbp_target_request *req)
 
 	txn->payload = data_buf;
 
-	rcode = sbp_rw_data_worker(txn);
+	while (sbp_rw_data_continue(txn)) {
+		unsigned long long offset;
+		void *payload;
+		int length;
+
+		offset = txn->offset;
+		payload = txn->payload;
+		length = txn->length;
+
+		if (length > txn->max_payload)
+			length = txn->max_payload;
+
+		/* FIXME: take page_size into account */
+
+		txn->length -= length;
+		txn->offset += length;
+		txn->payload += length;
+
+		rcode = sbp_run_transaction(txn->card, txn->tcode, txn->node_id,
+				txn->generation, txn->speed,
+				offset, payload, length);
+
+		if (rcode != RCODE_COMPLETE)
+			break;
+	}
 
 	if (rcode != RCODE_COMPLETE) {
 		ret = -EIO;
