@@ -353,15 +353,16 @@ int sbp_rw_data(struct sbp_target_request *req)
 	int tcode, num_workers, i, ret = 0;
 	struct sbp_rw_data_txn *txn;
 	struct sbp_rw_data_worker *workers;
+	void *data_buf;
 
-	req->data_buf = kmalloc(req->se_cmd.data_length, GFP_KERNEL);
-	if (!req->data_buf)
+	data_buf = kmalloc(req->se_cmd.data_length, GFP_KERNEL);
+	if (!data_buf)
 		return -ENOMEM;
 
 	if (req->se_cmd.data_direction == DMA_FROM_DEVICE) {
 		sg_copy_to_buffer(req->se_cmd.t_data_sg,
 				req->se_cmd.t_data_nents,
-				req->data_buf,
+				data_buf,
 				req->se_cmd.data_length);
 	}
 
@@ -422,7 +423,7 @@ int sbp_rw_data(struct sbp_target_request *req)
 	txn->running_workers = num_workers;
 	txn->scale_back = 0;
 
-	txn->payload = req->data_buf;
+	txn->payload = data_buf;
 
 	for (i = 0; i < num_workers; i++) {
 		workers[i].txn = txn;
@@ -450,12 +451,11 @@ int sbp_rw_data(struct sbp_target_request *req)
 	if (req->se_cmd.data_direction == DMA_TO_DEVICE) {
 		sg_copy_from_buffer(req->se_cmd.t_data_sg,
 				req->se_cmd.t_data_nents,
-				req->data_buf,
+				data_buf,
 				req->se_cmd.data_length);
 	}
 
-	kfree(req->data_buf);
-	req->data_buf = NULL;
+	kfree(data_buf);
 
 	return ret;
 }
