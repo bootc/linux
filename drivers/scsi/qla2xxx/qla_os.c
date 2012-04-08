@@ -911,12 +911,12 @@ qla2xxx_abort_fcport_cmds(fc_port_t *fcport)
 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
 		if (ha->isp_ops->abort_command(sp)) {
 			ql_dbg(ql_dbg_taskm, vha, 0x8010,
-				"Abort failed --  %lx\n", sp->cmd->serial_number);
+				"Abort failed --  %lx\n", sp->u.scmd.cmd->serial_number);
 		} else {
-			if (qla2x00_eh_wait_on_command(sp->cmd) != QLA_SUCCESS)
+			if (qla2x00_eh_wait_on_command(sp->u.scmd.cmd) != QLA_SUCCESS)
 				ql_dbg(ql_dbg_taskm, vha, 0x8011,
 					"Abort failed while waiting --  %lx\n",
-					sp->cmd->serial_number);
+					sp->u.scmd.cmd->serial_number);
 		}
 		spin_lock_irqsave(&ha->hardware_lock, flags);
 	}

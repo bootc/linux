@@ -552,6 +552,7 @@ extern void qla2x00_sp_free(void *, void *);
 extern void qla2x00_sp_timeout(unsigned long);
 extern void qla2x00_bsg_job_done(void *, void *, int);
 extern void qla2x00_bsg_sp_free(void *, void *);
+extern void qla2x00_start_iocbs(struct scsi_qla_host *, struct req_que *);
 
 /* Interrupt related */
 extern irqreturn_t qla82xx_intr_handler(int, void *);
