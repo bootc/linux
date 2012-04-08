@@ -374,10 +374,11 @@ static void ft_send_tm(struct ft_cmd *cmd)
 		ft_send_resp_code_and_free(cmd, FCP_CMND_FIELDS_INVALID);
 		return;
 	}
+
 	/* FIXME: Add referenced task tag for ABORT_TASK */
 	rc = target_submit_tmr(&cmd->se_cmd, cmd->sess->se_sess,
 		&cmd->ft_sense_buffer[0], scsilun_to_int(&fcp->fc_lun),
-			  cmd, tm_func, GFP_KERNEL, 0, 0);
+		cmd, tm_func, GFP_KERNEL, 0, 0);
 	if (rc < 0)
 		ft_send_resp_code_and_free(cmd, FCP_TMF_FAILED);
 }
@@ -540,8 +541,8 @@ static void ft_send_work(struct work_struct *work)
  	 * directly from ft_check_stop_free callback in response path.
  	 */
 	target_submit_cmd(&cmd->se_cmd, cmd->sess->se_sess, fcp->fc_cdb,
-				&cmd->ft_sense_buffer[0], scsilun_to_int(&fcp->fc_lun),
-				ntohl(fcp->fc_dl), task_attr, data_dir, 0);
+			&cmd->ft_sense_buffer[0], scsilun_to_int(&fcp->fc_lun),
+			ntohl(fcp->fc_dl), task_attr, data_dir, 0);
 	pr_debug("r_ctl %x alloc target_submit_cmd\n", fh->fh_r_ctl);
 	return;
 

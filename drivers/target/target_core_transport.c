@@ -1757,7 +1757,7 @@ EXPORT_SYMBOL(target_submit_cmd);
 static void target_complete_tmr_failure(struct work_struct *work)
 {
 	struct se_cmd *se_cmd = container_of(work, struct se_cmd, work);
-	
+
 	se_cmd->se_tmr_req->response = TMR_LUN_DOES_NOT_EXIST;
 	se_cmd->se_tfo->queue_tm_rsp(se_cmd);
 	transport_generic_free_cmd(se_cmd, 0);
@@ -1775,9 +1775,9 @@ static void target_complete_tmr_failure(struct work_struct *work)
  * @tm_type: Type of TM request
  * @gfp: gfp type for caller
  * @tag: referenced task tag for TMR_ABORT_TASK
- * @flags: submit cmd flags 
+ * @flags: submit cmd flags
  *
- * Callable from all contexts
+ * Callable from all contexts.
  **/
 
 int target_submit_tmr(struct se_cmd *se_cmd, struct se_session *se_sess,
@@ -2452,7 +2452,7 @@ static void transport_xor_callback(struct se_cmd *cmd)
 
 	offset = 0;
 	for_each_sg(cmd->t_bidi_data_sg, sg, cmd->t_bidi_data_nents, count) {
-		addr = kmap_atomic(sg_page(sg), KM_USER0);
+		addr = kmap_atomic(sg_page(sg));
 		if (!addr)
 			goto out;
 
@@ -2460,7 +2460,7 @@ static void transport_xor_callback(struct se_cmd *cmd)
 			*(addr + sg->offset + i) ^= *(buf + offset + i);
 
 		offset += sg->length;
-		kunmap_atomic(addr, KM_USER0);
+		kunmap_atomic(addr);
 	}
 
 out:
@@ -3497,7 +3497,7 @@ void transport_release_cmd(struct se_cmd *cmd)
 {
 	BUG_ON(!cmd->se_tfo);
 
-	if (cmd->se_tmr_req)
+	if (cmd->se_cmd_flags & SCF_SCSI_TMR_CDB)
 		core_tmr_release_req(cmd->se_tmr_req);
 	if (cmd->t_task_cdb != cmd->__t_task_cdb)
 		kfree(cmd->t_task_cdb);
@@ -3827,7 +3827,7 @@ int transport_generic_new_cmd(struct se_cmd *cmd)
 
 	if (task_cdbs < 0)
 		goto out_fail;
-	else if (!task_cdbs) {
+	else if (!task_cdbs && (cmd->se_cmd_flags & SCF_SCSI_DATA_SG_IO_CDB)) {
 		spin_lock_irq(&cmd->t_state_lock);
 		cmd->t_state = TRANSPORT_COMPLETE;
 		cmd->transport_state |= CMD_T_ACTIVE;
