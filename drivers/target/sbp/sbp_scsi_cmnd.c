@@ -235,23 +235,13 @@ int sbp_rw_data(struct sbp_target_request *req)
 		length, tfr_length, rcode = RCODE_COMPLETE, ret = 0;
 	struct sbp_page_table_entry *pte;
 	unsigned long long offset;
-	void *data_buf, *payload;
 	struct fw_card *card;
+	struct sg_mapping_iter iter;
 
-	data_buf = kmalloc(req->se_cmd.data_length, GFP_KERNEL);
-	if (!data_buf)
-		return -ENOMEM;
-
-	if (req->se_cmd.data_direction == DMA_FROM_DEVICE) {
+	if (req->se_cmd.data_direction == DMA_FROM_DEVICE)
 		tcode = TCODE_WRITE_BLOCK_REQUEST;
-		sg_copy_to_buffer(req->se_cmd.t_data_sg,
-				req->se_cmd.t_data_nents,
-				data_buf,
-				req->se_cmd.data_length);
-	}
-	else {
+	else
 		tcode = TCODE_READ_BLOCK_REQUEST;
-	}
 
 	max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(be32_to_cpu(req->orb.misc));
 	speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
@@ -282,7 +272,9 @@ int sbp_rw_data(struct sbp_target_request *req)
 		length = req->se_cmd.data_length;
 	}
 
-	payload = data_buf;
+	sg_miter_start(&iter, req->se_cmd.t_data_sg, req->se_cmd.t_data_nents,
+		req->se_cmd.data_direction == DMA_TO_DEVICE ?
+			SG_MITER_TO_SG : SG_MITER_FROM_SG);
 
 	while (length || num_pte) {
 		if (!length) {
@@ -294,35 +286,33 @@ int sbp_rw_data(struct sbp_target_request *req)
 			num_pte--;
 		}
 
-		tfr_length = min(length, max_payload);
+		sg_miter_next(&iter);
+
+		tfr_length = min3(length, max_payload, (int)iter.length);
 
 		/* FIXME: take page_size into account */
 
 		rcode = sbp_run_transaction(card, tcode, node_id,
 				generation, speed,
-				offset, payload, tfr_length);
+				offset, iter.addr, tfr_length);
 
 		if (rcode != RCODE_COMPLETE)
 			break;
 
 		length -= tfr_length;
 		offset += tfr_length;
-		payload += tfr_length;
+		iter.consumed = tfr_length;
 	}
+
+	sg_miter_stop(&iter);
 
 	if (rcode != RCODE_COMPLETE) {
 		ret = -EIO;
-	} else if (req->se_cmd.data_direction == DMA_TO_DEVICE) {
-		sg_copy_from_buffer(req->se_cmd.t_data_sg,
-				req->se_cmd.t_data_nents,
-				data_buf,
-				req->se_cmd.data_length);
 	}
 
 	WARN_ON(ret == 0 && length != 0);
 
 	fw_card_put(card);
-	kfree(data_buf);
 
 	return ret;
 }
