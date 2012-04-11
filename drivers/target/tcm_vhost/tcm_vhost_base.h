@@ -5,14 +5,14 @@
 struct tcm_vhost_cmd {
 	/* Descriptor from vhost_get_vq_desc() for virt_queue segment */
 	int tvc_vq_desc;
-	/* The Tag from include/linux/virtio_scsi.h:struct virtio_scsi_cmd_header */
+	/* The Tag from include/linux/virtio_scsi.h:struct virtio_scsi_cmd_req */
 	u64 tvc_tag;
 	/* The number of scatterlists associated with this cmd */
 	u32 tvc_sgl_count;
 	/* Pointer to the SGL formatted memory from virtio-scsi */
 	struct scatterlist *tvc_sgl;
 	/* Pointer to response */
-	struct virtio_scsi_footer __user *tvc_footer;
+	struct virtio_scsi_cmd_resp __user *tvc_footer;
 	/* Pointer to vhost_scsi for our device */
 	struct vhost_scsi *tvc_vhost;
 	 /* The TCM I/O descriptor that is accessed via container_of() */

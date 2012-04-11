@@ -53,7 +53,7 @@ int core_tmr_alloc_req(
 		pr_err("Unable to allocate struct se_tmr_req\n");
 		return -ENOMEM;
 	}
-	
+
 	se_cmd->se_cmd_flags |= SCF_SCSI_TMR_CDB;
 	se_cmd->se_tmr_req = tmr;
 	tmr->task_cmd = se_cmd;

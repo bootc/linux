@@ -85,26 +85,25 @@ static void vhost_scsi_complete_cmd_work(struct vhost_work *work)
 	struct tcm_vhost_cmd *tv_cmd;
 
 	while ((tv_cmd = vhost_scsi_get_cmd_from_completion(vs)) != NULL) {
-		struct virtio_scsi_footer v_footer;
+		struct virtio_scsi_cmd_resp v_rsp;
 		struct se_cmd *se_cmd = &tv_cmd->tvc_se_cmd;
 		int ret;
 
 		printk("%s tv_cmd %p resid %u status %#02x\n", __func__,
 			tv_cmd, se_cmd->residual_count, se_cmd->scsi_status);
 
-		memset(&v_footer, 0, sizeof(v_footer));
-		v_footer.resid = se_cmd->residual_count;
+		memset(&v_rsp, 0, sizeof(v_rsp));
+		v_rsp.resid = se_cmd->residual_count;
 		/* TODO is status_qualifier field needed? */
-		v_footer.status = se_cmd->scsi_status;
-		v_footer.sense_len = se_cmd->scsi_sense_length;
-		memcpy(v_footer.sense, tv_cmd->tvc_sense_buf,
-		       v_footer.sense_len);
-		ret = copy_to_user(tv_cmd->tvc_footer, &v_footer,
-		                   sizeof(v_footer));
+		v_rsp.status = se_cmd->scsi_status;
+		v_rsp.sense_len = se_cmd->scsi_sense_length;
+		memcpy(v_rsp.sense, tv_cmd->tvc_sense_buf,
+		       v_rsp.sense_len);
+		ret = copy_to_user(tv_cmd->tvc_footer, &v_rsp, sizeof(v_rsp));
 		if (likely(ret == 0))
 			vhost_add_used(&vs->cmd_vq, tv_cmd->tvc_vq_desc, 0);
 		else
-			pr_err("Faulted on virtio_scsi_footer\n");
+			pr_err("Faulted on virtio_scsi_cmd_resp\n");
 
 		vhost_scsi_free_cmd(tv_cmd);
 	}
@@ -127,7 +126,7 @@ void vhost_scsi_complete_cmd(struct tcm_vhost_cmd *tv_cmd)
 
 static struct tcm_vhost_cmd *vhost_scsi_allocate_cmd(
 	struct tcm_vhost_tpg *tv_tpg,
-	struct virtio_scsi_cmd_header *v_header,
+	struct virtio_scsi_cmd_req *v_req,
 	u32 exp_data_len,
 	int data_direction)
 {
@@ -151,13 +150,13 @@ static struct tcm_vhost_cmd *vhost_scsi_allocate_cmd(
 		return ERR_PTR(-ENOMEM);
 	}
 	INIT_LIST_HEAD(&tv_cmd->tvc_completion_list);
-	tv_cmd->tvc_tag = v_header->tag;
+	tv_cmd->tvc_tag = v_req->tag;
 
 	se_cmd = &tv_cmd->tvc_se_cmd;
 	/*
-	 * Locate the SAM Task Attr from virtio_scsi_cmd_header
+	 * Locate the SAM Task Attr from virtio_scsi_cmd_req
 	 */
-	sam_task_attr = v_header->task_attr;
+	sam_task_attr = v_req->task_attr;
 	/*
 	 * Initialize struct se_cmd descriptor from target_core_mod infrastructure
 	 */
@@ -273,12 +272,12 @@ static int vhost_scsi_map_iov_to_sgl(struct tcm_vhost_cmd *tv_cmd,
 static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 {
 	struct vhost_virtqueue *vq = &vs->cmd_vq;
-	struct virtio_scsi_cmd_header v_header;
+	struct virtio_scsi_cmd_req v_req;
 	struct tcm_vhost_tpg *tv_tpg;
 	struct tcm_vhost_cmd *tv_cmd;
 	u32 exp_data_len, data_direction;
 	unsigned out, in, i;
-	int head, ret;
+	int head, ret, lun;
 
 	/* Must use ioctl VHOST_SCSI_SET_ENDPOINT */
 	tv_tpg = vs->vs_tpg;
@@ -323,20 +322,20 @@ static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 		 * the guest.
 		 */
 		if (unlikely(vq->iov[out + in - 1].iov_len !=
-					sizeof(struct virtio_scsi_footer))) {
-			pr_err("Expecting virtio_scsi_footer, got %zu bytes\n",
+					sizeof(struct virtio_scsi_cmd_resp))) {
+			pr_err("Expecting virtio_scsi_cmd_resp, got %zu bytes\n",
 					vq->iov[out + in - 1].iov_len);
 			break;
 		}
 
-		if (unlikely(vq->iov[0].iov_len != sizeof(v_header))) {
-			pr_err("Expecting virtio_scsi_cmd_header, got %zu bytes\n",
+		if (unlikely(vq->iov[0].iov_len != sizeof(v_req))) {
+			pr_err("Expecting virtio_scsi_cmd_req, got %zu bytes\n",
 					vq->iov[0].iov_len);
 			break;
 		}
-		ret = __copy_from_user(&v_header, vq->iov[0].iov_base, sizeof(v_header));
+		ret = __copy_from_user(&v_req, vq->iov[0].iov_base, sizeof(v_req));
 		if (unlikely(ret)) {
-			pr_err("Faulted on virtio_scsi_cmd_header\n");
+			pr_err("Faulted on virtio_scsi_cmd_req\n");
 			break;
 		}
 
@@ -345,7 +344,7 @@ static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 			exp_data_len += vq->iov[i].iov_len;
 		}
 
-		tv_cmd = vhost_scsi_allocate_cmd(tv_tpg, &v_header,
+		tv_cmd = vhost_scsi_allocate_cmd(tv_tpg, &v_req,
 					exp_data_len, data_direction);
 		if (IS_ERR(tv_cmd)) {
 			pr_err("vhost_scsi_allocate_cmd failed %ld\n", PTR_ERR(tv_cmd));
@@ -355,8 +354,8 @@ static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 		tv_cmd->tvc_vhost = vs;
 
 		if (unlikely(vq->iov[out + in - 1].iov_len !=
-		             sizeof(struct virtio_scsi_footer))) {
-			pr_err("Expecting virtio_scsi_footer, "
+		             sizeof(struct virtio_scsi_cmd_resp))) {
+			pr_err("Expecting virtio_scsi_cmd_resp, "
 			       " got %zu bytes\n", vq->iov[out + in - 1].iov_len);
 			break;
 		}
@@ -390,9 +389,10 @@ static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 				scsi_command_size(tv_cmd->tvc_cdb), TCM_VHOST_MAX_CDB_SIZE);
 			break; /* TODO */
 		}
+		lun = scsilun_to_int((struct scsi_lun *)&v_req.lun[0]);
 
-		printk("vhost_scsi got command opcode: %#02x, lun: %#llx\n",
-			tv_cmd->tvc_cdb[0], v_header.lun);
+		printk("vhost_scsi got command opcode: %#02x, lun: %d\n",
+			tv_cmd->tvc_cdb[0], lun);
 
 		if (data_direction != DMA_NONE) {
 			ret = vhost_scsi_map_iov_to_sgl(tv_cmd, &vq->iov[2],
@@ -410,13 +410,11 @@ static void vhost_scsi_handle_vq(struct vhost_scsi *vs)
 		 */
 		tv_cmd->tvc_vq_desc = head;
 		/*
-		 * Locate the struct se_lun pointer based on v_header->lun, and
+		 * Locate the struct se_lun pointer based on v_req->lun, and
 		 * attach it to struct se_cmd
-		 *
-		 * Note this currently assumes v_header->lun has already been unpacked.
 		 */
-		if (transport_lookup_cmd_lun(&tv_cmd->tvc_se_cmd, v_header.lun) < 0) {
-			pr_err("Failed to look up lun: %#08llx\n", v_header.lun);
+		if (transport_lookup_cmd_lun(&tv_cmd->tvc_se_cmd, lun) < 0) {
+			pr_err("Failed to look up lun: %d\n", lun);
 			/* NON_EXISTENT_LUN */
 			transport_send_check_condition_and_sense(&tv_cmd->tvc_se_cmd,
 					tv_cmd->tvc_se_cmd.scsi_sense_reason, 0);
@@ -564,7 +562,7 @@ static int vhost_scsi_release(struct inode *inode, struct file *f)
 {
 	struct vhost_scsi *s = f->private_data;
 
-	vhost_dev_cleanup(&s->dev);
+	vhost_dev_cleanup(&s->dev, false);
 	kfree(s);
 	return 0;
 }

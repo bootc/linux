@@ -498,11 +498,11 @@ static int qla24xx_get_loop_id(struct scsi_qla_host *vha, const uint8_t *s_id,
 	int res, rc, i;
 	uint16_t entries;
 
-	gid_list = dma_alloc_coherent(&ha->pdev->dev, GID_LIST_SIZE,
+	gid_list = dma_alloc_coherent(&ha->pdev->dev, qla2x00_gid_list_size(ha),
 			&gid_list_dma, GFP_KERNEL);
 	if (!gid_list) {
-		printk(KERN_ERR "qla_target(%d): DMA Alloc failed of %zd\n",
-			vha->vp_idx, GID_LIST_SIZE);
+		printk(KERN_ERR "qla_target(%d): DMA Alloc failed of %u\n",
+			vha->vp_idx, qla2x00_gid_list_size(ha));
 		return -ENOMEM;
 	}
 
@@ -530,7 +530,7 @@ static int qla24xx_get_loop_id(struct scsi_qla_host *vha, const uint8_t *s_id,
 	}
 
 out_free_id_list:
-	dma_free_coherent(&ha->pdev->dev, GID_LIST_SIZE, gid_list, gid_list_dma);
+	dma_free_coherent(&ha->pdev->dev, qla2x00_gid_list_size(ha), gid_list, gid_list_dma);
 
 	return res;
 }
