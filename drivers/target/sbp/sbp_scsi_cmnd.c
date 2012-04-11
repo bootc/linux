@@ -234,8 +234,8 @@ void sbp_handle_command(struct sbp_target_request *req)
 	unpacked_lun = req->login->lun->unpacked_lun;
 	sbp_calc_data_length_direction(req, &data_length, &data_dir);
 
-	pr_debug("sbp_handle_command unpacked_lun:%d data_len:%d data_dir:%d\n",
-			unpacked_lun, data_length, data_dir);
+	pr_debug("sbp_handle_command ORB:0x%llx unpacked_lun:%d data_len:%d data_dir:%d\n",
+			req->orb_pointer, unpacked_lun, data_length, data_dir);
 
 	target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
 			req->sense_buf, unpacked_lun, data_length,
