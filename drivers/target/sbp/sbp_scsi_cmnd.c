@@ -233,7 +233,7 @@ int sbp_rw_data(struct sbp_target_request *req)
 	struct sbp_session *sess = req->login->sess;
 	int tcode, sg_miter_flags, max_payload, pg_size, speed, node_id,
 		generation, num_pte, length, tfr_length,
-		rcode = RCODE_COMPLETE, ret = 0;
+		rcode = RCODE_COMPLETE;
 	struct sbp_page_table_entry *pte;
 	unsigned long long offset;
 	struct fw_card *card;
@@ -308,16 +308,14 @@ int sbp_rw_data(struct sbp_target_request *req)
 	}
 
 	sg_miter_stop(&iter);
-
-	if (rcode != RCODE_COMPLETE) {
-		ret = -EIO;
-	}
-
-	WARN_ON(ret == 0 && length != 0);
-
 	fw_card_put(card);
 
-	return ret;
+	if (rcode == RCODE_COMPLETE) {
+		WARN_ON(length != 0);
+		return 0;
+	} else {
+		return -EIO;
+	}
 }
 
 int sbp_send_status(struct sbp_target_request *req)
