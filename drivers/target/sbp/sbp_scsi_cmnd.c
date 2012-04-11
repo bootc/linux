@@ -37,24 +37,6 @@
 #include "sbp_target_agent.h"
 #include "sbp_scsi_cmnd.h"
 
-struct sbp_rw_data_txn {
-	int max_payload;
-	int pg_size;
-
-	struct fw_card *card;
-	int node_id;
-	int generation;
-	int tcode;
-	int speed;
-
-	struct sbp_page_table_entry *pg_tbl;
-	int num_pte;
-
-	unsigned long long offset;
-	void *payload;
-	int length;
-};
-
 /*
  * Simple wrapper around fw_run_transaction that retries the transaction several
  * times in case of failure, with an exponential backoff.
@@ -242,28 +224,6 @@ void sbp_handle_command(struct sbp_target_request *req)
 			MSG_SIMPLE_TAG, data_dir, 0);
 }
 
-/* txn->mutex must already be held */
-static inline bool sbp_rw_data_continue(struct sbp_rw_data_txn *txn)
-{
-	struct sbp_page_table_entry *pte;
-
-	if (txn->length)
-		return true;
-
-	if (!txn->num_pte)
-		return false;
-
-	pte = txn->pg_tbl;
-	txn->offset = (u64)be16_to_cpu(pte->segment_base_hi) << 32 |
-		be32_to_cpu(pte->segment_base_lo);
-	txn->length = be16_to_cpu(pte->segment_length);
-
-	txn->pg_tbl++;
-	txn->num_pte--;
-
-	return true;
-}
-
 /*
  * DMA_TO_DEVICE = read from initiator (SCSI WRITE)
  * DMA_FROM_DEVICE = write to initiator (SCSI READ)
@@ -271,87 +231,83 @@ static inline bool sbp_rw_data_continue(struct sbp_rw_data_txn *txn)
 int sbp_rw_data(struct sbp_target_request *req)
 {
 	struct sbp_session *sess = req->login->sess;
-	int tcode, rcode = RCODE_COMPLETE, ret = 0;
-	struct sbp_rw_data_txn *txn;
-	void *data_buf;
+	int tcode, max_payload, pg_size, speed, node_id, generation, num_pte,
+		length, tfr_length, rcode = RCODE_COMPLETE, ret = 0;
+	struct sbp_page_table_entry *pte;
+	unsigned long long offset;
+	void *data_buf, *payload;
+	struct fw_card *card;
 
 	data_buf = kmalloc(req->se_cmd.data_length, GFP_KERNEL);
 	if (!data_buf)
 		return -ENOMEM;
 
 	if (req->se_cmd.data_direction == DMA_FROM_DEVICE) {
+		tcode = TCODE_WRITE_BLOCK_REQUEST;
 		sg_copy_to_buffer(req->se_cmd.t_data_sg,
 				req->se_cmd.t_data_nents,
 				data_buf,
 				req->se_cmd.data_length);
 	}
+	else {
+		tcode = TCODE_READ_BLOCK_REQUEST;
+	}
 
-	tcode = (req->se_cmd.data_direction == DMA_TO_DEVICE) ?
-		TCODE_READ_BLOCK_REQUEST :
-		TCODE_WRITE_BLOCK_REQUEST;
+	max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(be32_to_cpu(req->orb.misc));
+	speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
 
-	txn = kmalloc(sizeof(*txn), GFP_KERNEL);
-	if (!txn)
-		return -ENOMEM;
-
-	txn->max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(
-			be32_to_cpu(req->orb.misc));
-
-	txn->pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
-	if (txn->pg_size) {
+	pg_size = CMDBLK_ORB_PG_SIZE(be32_to_cpu(req->orb.misc));
+	if (pg_size) {
 		pr_err("sbp_run_transaction: page size ignored\n");
-		txn->pg_size = 0x100 << txn->pg_size;
+		pg_size = 0x100 << pg_size;
 	}
 
 	spin_lock_bh(&sess->lock);
-	txn->card = fw_card_get(sess->card);
-	txn->node_id = sess->node_id;
-	txn->generation = sess->generation;
+	card = fw_card_get(sess->card);
+	node_id = sess->node_id;
+	generation = sess->generation;
 	spin_unlock_bh(&sess->lock);
 
-	txn->tcode = tcode;
-	txn->speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
-
 	if (req->pg_tbl) {
-		txn->pg_tbl = req->pg_tbl;
-		txn->num_pte = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
+		pte = req->pg_tbl;
+		num_pte = CMDBLK_ORB_DATA_SIZE(be32_to_cpu(req->orb.misc));
 
-		txn->offset = 0;
-		txn->length = 0;
+		offset = 0;
+		length = 0;
 	} else {
-		txn->pg_tbl = NULL;
-		txn->num_pte = 0;
+		pte = NULL;
+		num_pte = 0;
 
-		txn->offset = sbp2_pointer_to_addr(&req->orb.data_descriptor);
-		txn->length = req->se_cmd.data_length;
+		offset = sbp2_pointer_to_addr(&req->orb.data_descriptor);
+		length = req->se_cmd.data_length;
 	}
 
-	txn->payload = data_buf;
+	payload = data_buf;
 
-	while (sbp_rw_data_continue(txn)) {
-		unsigned long long offset;
-		void *payload;
-		int length;
+	while (length || num_pte) {
+		if (!length) {
+			offset = (u64)be16_to_cpu(pte->segment_base_hi) << 32 |
+				be32_to_cpu(pte->segment_base_lo);
+			length = be16_to_cpu(pte->segment_length);
 
-		offset = txn->offset;
-		payload = txn->payload;
-		length = txn->length;
+			pte++;
+			num_pte--;
+		}
 
-		if (length > txn->max_payload)
-			length = txn->max_payload;
+		tfr_length = min(length, max_payload);
 
 		/* FIXME: take page_size into account */
 
-		txn->length -= length;
-		txn->offset += length;
-		txn->payload += length;
-
-		rcode = sbp_run_transaction(txn->card, txn->tcode, txn->node_id,
-				txn->generation, txn->speed,
-				offset, payload, length);
+		rcode = sbp_run_transaction(card, tcode, node_id,
+				generation, speed,
+				offset, payload, tfr_length);
 
 		if (rcode != RCODE_COMPLETE)
 			break;
+
+		length -= tfr_length;
+		offset += tfr_length;
+		payload += tfr_length;
 	}
 
 	if (rcode != RCODE_COMPLETE) {
@@ -363,11 +319,10 @@ int sbp_rw_data(struct sbp_target_request *req)
 				req->se_cmd.data_length);
 	}
 
-	WARN_ON(ret == 0 && txn->length != 0);
+	WARN_ON(ret == 0 && length != 0);
 
-	fw_card_put(txn->card);
+	fw_card_put(card);
 	kfree(data_buf);
-	kfree(txn);
 
 	return ret;
 }
