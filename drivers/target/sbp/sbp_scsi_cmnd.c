@@ -231,17 +231,21 @@ void sbp_handle_command(struct sbp_target_request *req)
 int sbp_rw_data(struct sbp_target_request *req)
 {
 	struct sbp_session *sess = req->login->sess;
-	int tcode, max_payload, pg_size, speed, node_id, generation, num_pte,
-		length, tfr_length, rcode = RCODE_COMPLETE, ret = 0;
+	int tcode, sg_miter_flags, max_payload, pg_size, speed, node_id,
+		generation, num_pte, length, tfr_length,
+		rcode = RCODE_COMPLETE, ret = 0;
 	struct sbp_page_table_entry *pte;
 	unsigned long long offset;
 	struct fw_card *card;
 	struct sg_mapping_iter iter;
 
-	if (req->se_cmd.data_direction == DMA_FROM_DEVICE)
+	if (req->se_cmd.data_direction == DMA_FROM_DEVICE) {
 		tcode = TCODE_WRITE_BLOCK_REQUEST;
-	else
+		sg_miter_flags = SG_MITER_FROM_SG;
+	} else {
 		tcode = TCODE_READ_BLOCK_REQUEST;
+		sg_miter_flags = SG_MITER_TO_SG;
+	}
 
 	max_payload = 4 << CMDBLK_ORB_MAX_PAYLOAD(be32_to_cpu(req->orb.misc));
 	speed = CMDBLK_ORB_SPEED(be32_to_cpu(req->orb.misc));
@@ -273,8 +277,7 @@ int sbp_rw_data(struct sbp_target_request *req)
 	}
 
 	sg_miter_start(&iter, req->se_cmd.t_data_sg, req->se_cmd.t_data_nents,
-		req->se_cmd.data_direction == DMA_TO_DEVICE ?
-			SG_MITER_TO_SG : SG_MITER_FROM_SG);
+		sg_miter_flags);
 
 	while (length || num_pte) {
 		if (!length) {
