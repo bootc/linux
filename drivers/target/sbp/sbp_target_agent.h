@@ -19,8 +19,6 @@ struct sbp_target_agent {
 	bool doorbell;
 };
 
-struct sbp_rw_data_txn;
-
 struct sbp_target_request {
 	struct sbp_login_descriptor *login;
 	u64 orb_pointer;
