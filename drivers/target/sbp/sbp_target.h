@@ -193,9 +193,6 @@ struct sbp_tport {
 	int max_logins_per_lun;
 };
 
-extern struct target_fabric_configfs *sbp_fabric_configfs;
-extern const struct fw_address_region sbp_register_region;
-
 static inline u64 sbp2_pointer_to_addr(const struct sbp2_pointer *ptr)
 {
 	return (u64)(be32_to_cpu(ptr->high) & 0x0000ffff) << 32 |

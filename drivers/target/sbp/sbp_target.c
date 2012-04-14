@@ -43,10 +43,10 @@
 #include "sbp_target.h"
 
 /* Local pointer to allocated TCM configfs fabric module */
-struct target_fabric_configfs *sbp_fabric_configfs;
+static struct target_fabric_configfs *sbp_fabric_configfs;
 
 /* FireWire address region for management and command block address handlers */
-const struct fw_address_region sbp_register_region = {
+static const struct fw_address_region sbp_register_region = {
 	.start	= CSR_REGISTER_BASE + 0x10000,
 	.end	= 0x1000000000000ULL,
 };
@@ -1435,7 +1435,7 @@ static void sbp_sense_mangle(struct sbp_target_request *req)
 		STATUS_BLOCK_SBP_STATUS(SBP_STATUS_OK));
 }
 
-int sbp_send_sense(struct sbp_target_request *req)
+static int sbp_send_sense(struct sbp_target_request *req)
 {
 	struct se_cmd *se_cmd = &req->se_cmd;
 
