@@ -16,6 +16,16 @@
 #define UASP_SS_EP_COMP_LOG_STREAMS 4
 #define UASP_SS_EP_COMP_NUM_STREAMS (1 << UASP_SS_EP_COMP_LOG_STREAMS)
 
+#define USB_G_STR_MANUFACTOR    1
+#define USB_G_STR_PRODUCT       2
+#define USB_G_STR_SERIAL        3
+#define USB_G_STR_CONFIG        4
+#define USB_G_STR_INT_UAS       5
+#define USB_G_STR_INT_BBB       6
+
+#define USB_G_ALT_INT_BBB       0
+#define USB_G_ALT_INT_UAS       1
+
 struct usbg_nacl {
 	/* Binary World Wide unique Port Name for SAS Initiator port */
 	u64 iport_wwpn;
@@ -132,73 +142,5 @@ struct f_uas {
 };
 
 extern struct usbg_tpg *the_only_tpg_I_currently_have;
-
-static inline struct f_uas *to_f_uas(struct usb_function *f)
-{
-	return container_of(f, struct f_uas, function);
-}
-
-int usbg_register_configfs(void);
-void usbg_deregister_configfs(void);
-int usbg_attach(struct usbg_tpg *tpg);
-void usbg_detach(struct usbg_tpg *tpg);
-int usbg_submit_command(struct f_uas *fu, void *cmdbuf, unsigned int len);
-int bot_submit_command(struct f_uas *fu, void *cmdbuf, unsigned int len);
-void usbg_cmd_release(struct kref *ref);
-void usbg_data_write_cmpl(struct usb_ep *ep, struct usb_request *req);
-int usbg_prepare_w_request(struct usbg_cmd *cmd, struct usb_request *req);
-
-static inline void usbg_cleanup_cmd(struct usbg_cmd *cmd)
-{
-	kref_put(&cmd->ref, usbg_cmd_release);
-}
-
-int usbg_bot_setup(struct usb_function *f,
-		const struct usb_ctrlrequest *ctrl);
-void bot_cleanup_old_alt(struct f_uas *fu);
-void bot_set_alt(struct f_uas *fu);
-void uasp_set_alt(struct f_uas *fu);
-void uasp_cleanup_old_alt(struct f_uas *fu);
-int usbg_send_status_response(struct se_cmd *se_cmd);
-int bot_send_status_response(struct usbg_cmd *cmd);
-int uasp_send_status_response(struct usbg_cmd *cmd);
-int usbg_send_write_request(struct se_cmd *se_cmd);
-int bot_send_write_request(struct usbg_cmd *cmd);
-int uasp_send_write_request(struct usbg_cmd *cmd);
-int usbg_send_read_response(struct se_cmd *se_cmd);
-int bot_send_read_response(struct usbg_cmd *cmd);
-int uasp_send_read_response(struct usbg_cmd *cmd);
-
-int usbg_check_true(struct se_portal_group *);
-int usbg_check_false(struct se_portal_group *);
-char *usbg_get_fabric_name(void);
-u8 usbg_get_fabric_proto_ident(struct se_portal_group *);
-char *usbg_get_fabric_wwn(struct se_portal_group *);
-u16 usbg_get_tag(struct se_portal_group *);
-u32 usbg_get_default_depth(struct se_portal_group *);
-u32 usbg_get_pr_transport_id(struct se_portal_group *, struct se_node_acl *,
-		struct t10_pr_registration *, int *, unsigned char *);
-u32 usbg_get_pr_transport_id_len(struct se_portal_group *,
-		struct se_node_acl *, struct t10_pr_registration *, int *);
-char *usbg_parse_pr_out_transport_id(struct se_portal_group *,
-		const char *, u32 *, char **);
-struct se_node_acl *usbg_alloc_fabric_acl(struct se_portal_group *);
-void usbg_release_fabric_acl(struct se_portal_group *,
-		struct se_node_acl *);
-u32 usbg_tpg_get_inst_index(struct se_portal_group *);
-int usbg_new_cmd(struct se_cmd *se_cmd);
-int usbg_cmd_queue_supported(struct se_cmd *se_cmd);
-void usbg_release_cmd(struct se_cmd *);
-int usbg_shutdown_session(struct se_session *);
-void usbg_close_session(struct se_session *);
-u32 usbg_sess_get_index(struct se_session *);
-int usbg_write_pending(struct se_cmd *);
-int usbg_write_pending_status(struct se_cmd *);
-void usbg_set_default_node_attrs(struct se_node_acl *);
-u32 usbg_get_task_tag(struct se_cmd *);
-int usbg_get_cmd_state(struct se_cmd *);
-int usbg_queue_tm_rsp(struct se_cmd *);
-u16 usbg_set_fabric_sense_len(struct se_cmd *, u32);
-u16 usbg_get_fabric_sense_len(void);
 
 #endif
