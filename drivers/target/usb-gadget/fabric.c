@@ -98,12 +98,12 @@ void usbg_data_write_cmpl(struct usb_ep *ep, struct usb_request *req)
 		goto cleanup;
 	}
 
-	/* if (req->num_sgs == 0) { */
+	if (req->num_sgs == 0) {
 		sg_copy_from_buffer(se_cmd->t_data_sg,
 				se_cmd->t_data_nents,
 				cmd->data_buf,
 				se_cmd->data_length);
-	/* } */
+	}
 
 	complete(&cmd->write_complete);
 	return;
@@ -115,24 +115,21 @@ cleanup:
 int usbg_prepare_w_request(struct usbg_cmd *cmd, struct usb_request *req)
 {
 	struct se_cmd *se_cmd = &cmd->se_cmd;
-#if 0
 	struct f_uas *fu = cmd->fu;
 	struct usb_gadget *gadget = fuas_to_gadget(fu);
-#endif
 
-	/* if (!gadget->sg_supported) { */
+	if (!gadget->sg_supported) {
 		cmd->data_buf = kmalloc(se_cmd->data_length, GFP_ATOMIC);
 		if (!cmd->data_buf)
 			return -ENOMEM;
 
 		req->buf = cmd->data_buf;
-#if 0
 	} else {
 		req->buf = NULL;
 		req->num_sgs = se_cmd->t_data_nents;
 		req->sg = se_cmd->t_data_sg;
 	}
-#endif
+
 	req->complete = usbg_data_write_cmpl;
 	req->length = se_cmd->data_length;
 	req->context = cmd;
