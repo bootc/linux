@@ -28,4 +28,4 @@ obj-$(CONFIG_TCM_FC)		+= tcm_fc/
 obj-$(CONFIG_ISCSI_TARGET)	+= iscsi/
 obj-$(CONFIG_TCM_VHOST)		+= tcm_vhost/
 obj-$(CONFIG_TARGET_USB_GADGET)	+= usb-gadget/
-obj-$(CONFIG_FIREWIRE_SBP_TARGET) += sbp/
+obj-$(CONFIG_SBP_TARGET)	+= sbp/
