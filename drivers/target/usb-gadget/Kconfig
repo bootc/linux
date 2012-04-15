@@ -1,4 +1,4 @@
-config TARGET_USB_GADGET
+config TCM_USB_GADGET
 	tristate "USB Gadget Fabric Module"
 	depends on USB_GADGET
 	---help---
