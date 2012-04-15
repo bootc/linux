@@ -1,7 +1,7 @@
-* Force-terminate sessions when disabling targets
+1. Improve FireWire data transfer rate by queuing up several simultaneous transfers
+2. Force-terminate sessions when disabling targets
+3. Implement TASK MANAGEMENT functionality
 * Ability to have several SCSI commands in-flight (TCQ?)
-* Retry failed FireWire transactions a few times with exponential backoff
-* Take into account the page_size field for transfers and/or page tables
+* Take into account the page_size field for transfers
 * Handle descriptor format sense data
 * Implement QUERY LOGINS management ORB
-* Implement TASK MANAGEMENT functionality

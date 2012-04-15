@@ -193,9 +193,6 @@ struct sbp_tport {
 	int max_logins_per_lun;
 };
 
-extern struct target_fabric_configfs *sbp_fabric_configfs;
-extern const struct fw_address_region sbp_register_region;
-
 static inline u64 sbp2_pointer_to_addr(const struct sbp2_pointer *ptr)
 {
 	return (u64)(be32_to_cpu(ptr->high) & 0x0000ffff) << 32 |
@@ -207,5 +204,48 @@ static inline void addr_to_sbp2_pointer(u64 addr, struct sbp2_pointer *ptr)
 	ptr->high = cpu_to_be32(addr >> 32);
 	ptr->low = cpu_to_be32(addr);
 }
+
+struct sbp_target_agent {
+	spinlock_t lock;
+	struct fw_address_handler handler;
+	struct sbp_login_descriptor *login;
+	int state;
+	struct work_struct work;
+	u64 orb_pointer;
+	bool doorbell;
+};
+
+struct sbp_target_request {
+	struct sbp_login_descriptor *login;
+	u64 orb_pointer;
+	struct sbp_command_block_orb orb;
+	struct sbp_status_block status;
+	struct work_struct work;
+
+	struct se_cmd se_cmd;
+	struct sbp_page_table_entry *pg_tbl;
+	void *cmd_buf;
+
+	unsigned char sense_buf[TRANSPORT_SENSE_BUFFER];
+};
+
+struct sbp_management_agent {
+	spinlock_t lock;
+	struct sbp_tport *tport;
+	struct fw_address_handler handler;
+	int state;
+	struct work_struct work;
+	u64 orb_offset;
+	struct sbp_management_request *request;
+};
+
+struct sbp_management_request {
+	struct sbp_management_orb orb;
+	struct sbp_status_block status;
+	struct fw_card *card;
+	int generation;
+	int node_addr;
+	int speed;
+};
 
 #endif
