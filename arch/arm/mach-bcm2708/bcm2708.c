@@ -31,6 +31,7 @@
 #include <linux/cnt32_to_63.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/spi/spi.h>
 
 #include <linux/version.h>
 #include <linux/clkdev.h>
@@ -200,7 +201,6 @@ static struct clk osc_clk = {
 
 /* warning - the USB needs a clock > 34MHz */
 
-#ifdef CONFIG_MMC_BCM2708
 static struct clk sdhost_clk = {
 #ifdef CONFIG_ARCH_BCM2708_CHIPIT
 	.rate = 4000000,	/* 4MHz */
@@ -208,7 +208,6 @@ static struct clk sdhost_clk = {
 	.rate = 250000000,	/* 250MHz */
 #endif
 };
-#endif
 
 static struct clk_lookup lookups[] = {
 	{			/* UART0 */
@@ -224,6 +223,9 @@ static struct clk_lookup lookups[] = {
 	 .dev_id = "bcm2708_mci.0",
 	 .clk = &sdhost_clk,
 #endif
+	 }, {	/* SPI */
+		 .dev_id = "bcm27xx-spi.0",
+		 .clk = &sdhost_clk,
 	 }
 };
 
@@ -466,6 +468,41 @@ static struct platform_device bcm2708_alsa_devices[] = {
 	       },
 };
 
+static struct resource bcm2708_spi_resources[] = {
+	{
+		.start = SPI0_BASE,
+		.end = SPI0_BASE + SZ_256 - 1,
+		.flags = IORESOURCE_MEM,
+	}, {
+		.start = IRQ_SPI,
+		.end = IRQ_SPI,
+		.flags = IORESOURCE_IRQ,
+	}
+};
+
+static struct platform_device bcm2708_spi_device = {
+	.name = "bcm27xx-spi",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(bcm2708_spi_resources),
+	.resource = bcm2708_spi_resources,
+};
+
+static struct spi_board_info bcm2708_spi_devices[] = {
+	{
+		.modalias = "spidev",
+		.max_speed_hz = 500000,
+		.bus_num = 0,
+		.chip_select = 0,
+		.mode = SPI_MODE_0,
+	}, {
+		.modalias = "spidev",
+		.max_speed_hz = 500000,
+		.bus_num = 0,
+		.chip_select = 1,
+		.mode = SPI_MODE_0,
+	}
+};
+
 int __init bcm_register_device(struct platform_device *pdev)
 {
 	int ret;
@@ -505,6 +542,8 @@ void __init bcm2708_init(void)
 	for (i = 0; i < ARRAY_SIZE(bcm2708_alsa_devices); i++)
 		bcm_register_device(&bcm2708_alsa_devices[i]);
 
+	bcm_register_device(&bcm2708_spi_device);
+
 #ifdef CONFIG_BCM2708_VCMEM
 	{
 		extern void vc_mem_connected_init(void);
@@ -517,6 +556,11 @@ void __init bcm2708_init(void)
 	}
 	system_rev = boardrev;
 	system_serial_low = serial;
+
+#ifdef CONFIG_SPI
+	spi_register_board_info(bcm2708_spi_devices,
+			ARRAY_SIZE(bcm2708_spi_devices));
+#endif
 }
 
 #define TIMER_PERIOD 10000	/* HZ in microsecs */
