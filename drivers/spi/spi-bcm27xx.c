@@ -32,6 +32,7 @@
 #include <linux/spi/spi.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
+#include <linux/log2.h>
 
 /* SPI register offsets */
 #define SPI_CS			0x00
@@ -111,19 +112,6 @@ static irqreturn_t bcm27xx_spi_interrupt(int irq, void *dev_id)
 	return IRQ_NONE;
 }
 
-/* from http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2 */
-static inline int round_up_power_of_2(unsigned int x)
-{
-	x--;
-	x |= x >> 1;
-	x |= x >> 2;
-	x |= x >> 4;
-	x |= x >> 8;
-	x |= x >> 16;
-	x++;
-	return x;
-}
-
 static int bcm27xx_setup_state(struct spi_master *master,
 		struct device *dev, struct bcm27xx_spi_state *state,
 		u32 hz, u8 csel, u8 mode, u8 bpw)
@@ -141,7 +129,7 @@ static int bcm27xx_setup_state(struct spi_master *master,
 		cdiv = DIV_ROUND_UP(bus_hz, hz);
 
 		/* CDIV must be a power of 2, so round up */
-		cdiv = round_up_power_of_2(cdiv);
+		cdiv = roundup_pow_of_two(cdiv);
 
 		if (cdiv > 65536) {
 			dev_dbg(dev,
