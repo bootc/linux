@@ -1,5 +1,5 @@
 /*
- * Driver for Broadcom BCM27xx SPI Controllers
+ * Driver for Broadcom BCM2708 SPI Controllers
  *
  * Copyright (C) 2012 Chris Boot
  *
@@ -68,9 +68,9 @@
 #define SPI_CS_CS_10		0x00000002
 #define SPI_CS_CS_01		0x00000001
 
-#define DRV_NAME	"bcm27xx-spi"
+#define DRV_NAME	"bcm2708_spi"
 
-struct bcm27xx_spi {
+struct bcm2708_spi {
 	spinlock_t lock;
 	void __iomem *base;
 	int irq;
@@ -83,25 +83,25 @@ struct bcm27xx_spi {
 	/*wait_queue_head_t waitq;*/
 };
 
-struct bcm27xx_spi_state {
+struct bcm2708_spi_state {
 	u32 cs;
 	u16 cdiv;
 };
 
-static inline u32 bcm27xx_rd(struct bcm27xx_spi *bs, unsigned reg)
+static inline u32 bcm2708_rd(struct bcm2708_spi *bs, unsigned reg)
 {
 	return readl(bs->base + reg);
 }
 
-static inline void bcm27xx_wr(struct bcm27xx_spi *bs, unsigned reg, u32 val)
+static inline void bcm2708_wr(struct bcm2708_spi *bs, unsigned reg, u32 val)
 {
 	writel(val, bs->base + reg);
 }
 
-static irqreturn_t bcm27xx_spi_interrupt(int irq, void *dev_id)
+static irqreturn_t bcm2708_spi_interrupt(int irq, void *dev_id)
 {
 	struct spi_master *master = dev_id;
-	struct bcm27xx_spi *bs = spi_master_get_devdata(master);
+	struct bcm2708_spi *bs = spi_master_get_devdata(master);
 
 	spin_lock(&bs->lock);
 
@@ -112,11 +112,11 @@ static irqreturn_t bcm27xx_spi_interrupt(int irq, void *dev_id)
 	return IRQ_NONE;
 }
 
-static int bcm27xx_setup_state(struct spi_master *master,
-		struct device *dev, struct bcm27xx_spi_state *state,
+static int bcm2708_setup_state(struct spi_master *master,
+		struct device *dev, struct bcm2708_spi_state *state,
 		u32 hz, u8 csel, u8 mode, u8 bpw)
 {
-	struct bcm27xx_spi *bs = spi_master_get_devdata(master);
+	struct bcm2708_spi *bs = spi_master_get_devdata(master);
 	int cdiv;
 	unsigned long bus_hz;
 	u32 cs = 0;
@@ -178,11 +178,11 @@ static int bcm27xx_setup_state(struct spi_master *master,
 	return 0;
 }
 
-static int bcm27xx_process_transfer(struct bcm27xx_spi *bs,
+static int bcm2708_process_transfer(struct bcm2708_spi *bs,
 		struct spi_message *msg, struct spi_transfer *xfer)
 {
 	struct spi_device *spi = msg->spi;
-	struct bcm27xx_spi_state state, *stp;
+	struct bcm2708_spi_state state, *stp;
 	int ret;
 	const u8 *tx_buf;
 	u8 *rx_buf, tmp;
@@ -193,7 +193,7 @@ static int bcm27xx_process_transfer(struct bcm27xx_spi *bs,
 		return -ESHUTDOWN;
 
 	if (xfer->bits_per_word || xfer->speed_hz) {
-		ret = bcm27xx_setup_state(spi->master, &spi->dev, &state,
+		ret = bcm2708_setup_state(spi->master, &spi->dev, &state,
 			spi->max_speed_hz, spi->chip_select, spi->mode,
 			spi->bits_per_word);
 		if (ret)
@@ -210,11 +210,11 @@ static int bcm27xx_process_transfer(struct bcm27xx_spi *bs,
 
 	cs = stp->cs | SPI_CS_TA;
 
-	bcm27xx_wr(bs, SPI_CLK, stp->cdiv);
-	bcm27xx_wr(bs, SPI_CS, cs);
+	bcm2708_wr(bs, SPI_CLK, stp->cdiv);
+	bcm2708_wr(bs, SPI_CS, cs);
 
 	while (tx_len || rx_len) {
-		cs = bcm27xx_rd(bs, SPI_CS);
+		cs = bcm2708_rd(bs, SPI_CS);
 
 		if (tx_len && (cs & SPI_CS_TXD)) {
 			if (tx_buf)
@@ -222,11 +222,11 @@ static int bcm27xx_process_transfer(struct bcm27xx_spi *bs,
 			else
 				tmp = 0;
 
-			bcm27xx_wr(bs, SPI_FIFO, tmp);
+			bcm2708_wr(bs, SPI_FIFO, tmp);
 			tx_len--;
 		}
 		if (rx_len && (cs & SPI_CS_RXD)) {
-			tmp = bcm27xx_rd(bs, SPI_FIFO);
+			tmp = bcm2708_rd(bs, SPI_FIFO);
 			rx_len--;
 
 			if (rx_buf)
@@ -235,10 +235,10 @@ static int bcm27xx_process_transfer(struct bcm27xx_spi *bs,
 	}
 
 	do {
-		cs = bcm27xx_rd(bs, SPI_CS);
+		cs = bcm2708_rd(bs, SPI_CS);
 	} while (!(cs & SPI_CS_DONE));
 
-	bcm27xx_wr(bs, SPI_CS, SPI_CS_REN);
+	bcm2708_wr(bs, SPI_CS, SPI_CS_REN);
 
 	if (xfer->delay_usecs)
 		udelay(xfer->delay_usecs);
@@ -248,9 +248,9 @@ static int bcm27xx_process_transfer(struct bcm27xx_spi *bs,
 	return 0;
 }
 
-static void bcm27xx_work(struct work_struct *work)
+static void bcm2708_work(struct work_struct *work)
 {
-	struct bcm27xx_spi *bs = container_of(work, struct bcm27xx_spi, work);
+	struct bcm2708_spi *bs = container_of(work, struct bcm2708_spi, work);
 	unsigned long flags;
 	struct spi_message *msg;
 	struct spi_transfer *xfer;
@@ -263,7 +263,7 @@ static void bcm27xx_work(struct work_struct *work)
 		spin_unlock_irqrestore(&bs->lock, flags);
 
 		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
-			status = bcm27xx_process_transfer(bs, msg, xfer);
+			status = bcm2708_process_transfer(bs, msg, xfer);
 			if (status)
 				break;
 		}
@@ -276,10 +276,10 @@ static void bcm27xx_work(struct work_struct *work)
 	spin_unlock_irqrestore(&bs->lock, flags);
 }
 
-static int bcm27xx_spi_setup(struct spi_device *spi)
+static int bcm2708_spi_setup(struct spi_device *spi)
 {
-	struct bcm27xx_spi *bs = spi_master_get_devdata(spi->master);
-	struct bcm27xx_spi_state *state;
+	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
+	struct bcm2708_spi_state *state;
 	int ret;
 
 	if (bs->stopping)
@@ -302,7 +302,7 @@ static int bcm27xx_spi_setup(struct spi_device *spi)
 		spi->controller_state = state;
 	}
 
-	ret = bcm27xx_setup_state(spi->master, &spi->dev, state,
+	ret = bcm2708_setup_state(spi->master, &spi->dev, state,
 		spi->max_speed_hz, spi->chip_select, spi->mode,
 		spi->bits_per_word);
 	if (ret < 0) {
@@ -318,9 +318,9 @@ static int bcm27xx_spi_setup(struct spi_device *spi)
 	return 0;
 }
 
-static int bcm27xx_spi_transfer(struct spi_device *spi, struct spi_message *msg)
+static int bcm2708_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 {
-	struct bcm27xx_spi *bs = spi_master_get_devdata(spi->master);
+	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
 	struct device *controller = spi->master->dev.parent;
 	struct spi_transfer *xfer;
 	int ret;
@@ -341,7 +341,7 @@ static int bcm27xx_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 		if (!xfer->bits_per_word || xfer->speed_hz)
 			continue;
 
-		ret = bcm27xx_setup_state(spi->master, &spi->dev, NULL,
+		ret = bcm2708_setup_state(spi->master, &spi->dev, NULL,
 			xfer->speed_hz ? xfer->speed_hz : spi->max_speed_hz,
 			spi->chip_select, spi->mode,
 			xfer->bits_per_word ? xfer->bits_per_word :
@@ -361,7 +361,7 @@ static int bcm27xx_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 	return 0;
 }
 
-static void bcm27xx_spi_cleanup(struct spi_device *spi)
+static void bcm2708_spi_cleanup(struct spi_device *spi)
 {
 	if (spi->controller_state) {
 		kfree(spi->controller_state);
@@ -369,13 +369,13 @@ static void bcm27xx_spi_cleanup(struct spi_device *spi)
 	}
 }
 
-static int __devinit bcm27xx_spi_probe(struct platform_device *pdev)
+static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 {
 	struct resource *regs;
 	int irq, err = -ENOMEM;
 	struct clk *clk;
 	struct spi_master *master;
-	struct bcm27xx_spi *bs;
+	struct bcm2708_spi *bs;
 
 	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!regs) {
@@ -406,9 +406,9 @@ static int __devinit bcm27xx_spi_probe(struct platform_device *pdev)
 
 	master->bus_num = pdev->id;
 	master->num_chipselect = 3;
-	master->setup = bcm27xx_spi_setup;
-	master->transfer = bcm27xx_spi_transfer;
-	master->cleanup = bcm27xx_spi_cleanup;
+	master->setup = bcm2708_spi_setup;
+	master->transfer = bcm2708_spi_transfer;
+	master->cleanup = bcm2708_spi_cleanup;
 	platform_set_drvdata(pdev, master);
 
 	bs = spi_master_get_devdata(master);
@@ -416,7 +416,7 @@ static int __devinit bcm27xx_spi_probe(struct platform_device *pdev)
 	spin_lock_init(&bs->lock);
 	INIT_LIST_HEAD(&bs->queue);
 	/*init_waitqueue_head(&bs->waitq);*/
-	INIT_WORK(&bs->work, bcm27xx_work);
+	INIT_WORK(&bs->work, bcm2708_work);
 
 	bs->base = ioremap(regs->start, resource_size(regs));
 	if (!bs->base) {
@@ -434,7 +434,7 @@ static int __devinit bcm27xx_spi_probe(struct platform_device *pdev)
 	bs->clk = clk;
 	bs->stopping = 0;
 
-	err = request_irq(irq, bcm27xx_spi_interrupt, 0, dev_name(&pdev->dev),
+	err = request_irq(irq, bcm2708_spi_interrupt, 0, dev_name(&pdev->dev),
 			master);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
@@ -443,7 +443,7 @@ static int __devinit bcm27xx_spi_probe(struct platform_device *pdev)
 
 	/* initialise the hardware */
 	clk_enable(clk);
-	bcm27xx_wr(bs, SPI_CS, SPI_CS_REN | SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
+	bcm2708_wr(bs, SPI_CS, SPI_CS_REN | SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
 
 	err = spi_register_master(master);
 	if (err) {
@@ -469,15 +469,15 @@ out_clk_put:
 	return err;
 }
 
-static int __devexit bcm27xx_spi_remove(struct platform_device *pdev)
+static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
 {
 	struct spi_master *master = platform_get_drvdata(pdev);
-	struct bcm27xx_spi *bs = spi_master_get_devdata(master);
+	struct bcm2708_spi *bs = spi_master_get_devdata(master);
 
 	/* reset the hardware and block queue progress */
 	spin_lock_irq(&bs->lock);
 	bs->stopping = 1;
-	bcm27xx_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
+	bcm2708_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
 	spin_unlock_irq(&bs->lock);
 
 	flush_work_sync(&bs->work);
@@ -492,17 +492,17 @@ static int __devexit bcm27xx_spi_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_driver bcm27xx_spi_driver = {
+static struct platform_driver bcm2708_spi_driver = {
 	.driver		= {
 		.name	= DRV_NAME,
 		.owner	= THIS_MODULE,
 	},
-	.probe		= bcm27xx_spi_probe,
-	.remove		= __devexit_p(bcm27xx_spi_remove),
+	.probe		= bcm2708_spi_probe,
+	.remove		= __devexit_p(bcm2708_spi_remove),
 };
-module_platform_driver(bcm27xx_spi_driver);
+module_platform_driver(bcm2708_spi_driver);
 
-MODULE_DESCRIPTION("SPI controller driver for Broadcom BCM27xx");
+MODULE_DESCRIPTION("SPI controller driver for Broadcom BCM2708");
 MODULE_AUTHOR("Chris Boot <bootc@bootc.net>");
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:" DRV_NAME);
