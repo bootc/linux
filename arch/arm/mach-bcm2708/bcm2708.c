@@ -224,7 +224,7 @@ static struct clk_lookup lookups[] = {
 	 .clk = &sdhost_clk,
 #endif
 	 }, {	/* SPI */
-		 .dev_id = "bcm27xx-spi.0",
+		 .dev_id = "bcm2708_spi.0",
 		 .clk = &sdhost_clk,
 	 }
 };
@@ -481,7 +481,7 @@ static struct resource bcm2708_spi_resources[] = {
 };
 
 static struct platform_device bcm2708_spi_device = {
-	.name = "bcm27xx-spi",
+	.name = "bcm2708_spi",
 	.id = 0,
 	.num_resources = ARRAY_SIZE(bcm2708_spi_resources),
 	.resource = bcm2708_spi_resources,
