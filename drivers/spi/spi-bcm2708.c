@@ -321,7 +321,6 @@ static int bcm2708_spi_setup(struct spi_device *spi)
 static int bcm2708_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 {
 	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
-	struct device *controller = spi->master->dev.parent;
 	struct spi_transfer *xfer;
 	int ret;
 	unsigned long flags;
