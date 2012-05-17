@@ -238,10 +238,13 @@ static int bcm2708_process_transfer(struct bcm2708_spi *bs,
 		cs = bcm2708_rd(bs, SPI_CS);
 	} while (!(cs & SPI_CS_DONE));
 
-	bcm2708_wr(bs, SPI_CS, SPI_CS_REN);
-
 	if (xfer->delay_usecs)
 		udelay(xfer->delay_usecs);
+
+	if (list_is_last(&xfer->transfer_list, &msg->transfers) ||
+			xfer->cs_change) {
+		bcm2708_wr(bs, SPI_CS, cs & ~SPI_CS_TA);
+	}
 
 	msg->actual_length += xfer->len;
 
