@@ -75,7 +75,7 @@ struct bcm2708_spi {
 	void __iomem *base;
 	int irq;
 	struct clk *clk;
-	u8 stopping;
+	bool stopping;
 
 	struct list_head queue;
 	struct workqueue_struct *workq;
@@ -431,7 +431,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	bs->irq = irq;
 	bs->clk = clk;
-	bs->stopping = 0;
+	bs->stopping = false;
 
 	err = request_irq(irq, bcm2708_spi_interrupt, 0, dev_name(&pdev->dev),
 			master);
@@ -475,7 +475,7 @@ static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
 
 	/* reset the hardware and block queue progress */
 	spin_lock_irq(&bs->lock);
-	bs->stopping = 1;
+	bs->stopping = true;
 	bcm2708_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
 	spin_unlock_irq(&bs->lock);
 
