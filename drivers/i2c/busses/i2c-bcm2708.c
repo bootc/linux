@@ -166,6 +166,12 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 	} else if (s & BSC_S_DONE) {
 		bi->nmsgs--;
 
+		/* drain the RX FIFO */
+		while (s & BSC_S_RXD) {
+			msg->buf[bi->pos++] = bcm2708_rd(bi, BSC_FIFO);
+			s = bcm2708_rd(bi, BSC_S);
+		};
+
 		bcm2708_bsc_reset(bi);
 
 		if (bi->nmsgs) {
