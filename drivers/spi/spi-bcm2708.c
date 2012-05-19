@@ -33,6 +33,8 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/log2.h>
+#include <linux/sched.h>
+#include <linux/wait.h>
 
 /* SPI register offsets */
 #define SPI_CS			0x00
@@ -68,6 +70,8 @@
 #define SPI_CS_CS_10		0x00000002
 #define SPI_CS_CS_01		0x00000001
 
+#define SPI_TIMEOUT_MS	150
+
 #define DRV_NAME	"bcm2708_spi"
 
 struct bcm2708_spi {
@@ -80,7 +84,12 @@ struct bcm2708_spi {
 	struct list_head queue;
 	struct workqueue_struct *workq;
 	struct work_struct work;
-	/*wait_queue_head_t waitq;*/
+	wait_queue_head_t waitq;
+
+	const u8 *tx_buf;
+	u8 *rx_buf;
+	int len;
+	bool done;
 };
 
 struct bcm2708_spi_state {
@@ -124,18 +133,71 @@ static inline void bcm2708_wr(struct bcm2708_spi *bs, unsigned reg, u32 val)
 	writel(val, bs->base + reg);
 }
 
+static inline void bcm2708_rd_fifo(struct bcm2708_spi *bs, int len)
+{
+	u8 byte;
+
+	while (len--) {
+		byte = bcm2708_rd(bs, SPI_FIFO);
+		if (bs->rx_buf)
+			*bs->rx_buf++ = byte;
+	}
+}
+
+static inline void bcm2708_wr_fifo(struct bcm2708_spi *bs, int len)
+{
+	u8 byte;
+
+	if (len > bs->len)
+		len = bs->len;
+
+	while (len--) {
+		byte = bs->tx_buf ? *bs->tx_buf++ : 0;
+		bcm2708_wr(bs, SPI_FIFO, byte);
+		bs->len--;
+	}
+}
+
 static irqreturn_t bcm2708_spi_interrupt(int irq, void *dev_id)
 {
 	struct spi_master *master = dev_id;
 	struct bcm2708_spi *bs = spi_master_get_devdata(master);
+	u32 cs;
 
 	spin_lock(&bs->lock);
 
-	/* FIXME */
+	cs = bcm2708_rd(bs, SPI_CS);
+
+	if (cs & SPI_CS_DONE) {
+		if (bs->len) { /* first interrupt in a transfer */
+			/* fill the TX fifo with up to 16 bytes */
+			bcm2708_wr_fifo(bs, 16);
+		} else { /* transfer complete */
+			/* disable interrupts */
+			cs &= ~(SPI_CS_INTR | SPI_CS_INTD);
+			bcm2708_wr(bs, SPI_CS, cs);
+
+			/* drain RX FIFO */
+			while (cs & SPI_CS_RXD) {
+				bcm2708_rd_fifo(bs, 1);
+				cs = bcm2708_rd(bs, SPI_CS);
+			}
+
+			/* wake up our bh */
+			bs->done = true;
+			wake_up_interruptible(&bs->waitq);
+		}
+	} else if (cs & SPI_CS_RXR) {
+		/* read 12 bytes of data */
+		bcm2708_rd_fifo(bs, 12);
+
+		/* write up to 12 bytes */
+		bcm2708_wr_fifo(bs, 12);
+	}
 
 	spin_unlock(&bs->lock);
 
-	return IRQ_NONE;
+	return IRQ_HANDLED;
 }
 
 static int bcm2708_setup_state(struct spi_master *master,
@@ -210,9 +272,6 @@ static int bcm2708_process_transfer(struct bcm2708_spi *bs,
 	struct spi_device *spi = msg->spi;
 	struct bcm2708_spi_state state, *stp;
 	int ret;
-	const u8 *tx_buf;
-	u8 *rx_buf, tmp;
-	int tx_len, rx_len;
 	u32 cs;
 
 	if (bs->stopping)
@@ -230,49 +289,33 @@ static int bcm2708_process_transfer(struct bcm2708_spi *bs,
 		stp = spi->controller_state;
 	}
 
-	tx_buf = xfer->tx_buf;
-	rx_buf = xfer->rx_buf;
-	tx_len = rx_len = xfer->len;
+	bs->tx_buf = xfer->tx_buf;
+	bs->rx_buf = xfer->rx_buf;
+	bs->len = xfer->len;
+	bs->done = false;
 
-	cs = stp->cs | SPI_CS_TA;
+	cs = stp->cs | SPI_CS_INTR | SPI_CS_INTD | SPI_CS_TA;
 
 	bcm2708_wr(bs, SPI_CLK, stp->cdiv);
 	bcm2708_wr(bs, SPI_CS, cs);
 
-	while (tx_len || rx_len) {
-		cs = bcm2708_rd(bs, SPI_CS);
-
-		if (tx_len && (cs & SPI_CS_TXD)) {
-			if (tx_buf)
-				tmp = *tx_buf++;
-			else
-				tmp = 0;
-
-			bcm2708_wr(bs, SPI_FIFO, tmp);
-			tx_len--;
-		}
-		if (rx_len && (cs & SPI_CS_RXD)) {
-			tmp = bcm2708_rd(bs, SPI_FIFO);
-			rx_len--;
-
-			if (rx_buf)
-				*rx_buf++ = tmp;
-		}
+	ret = wait_event_interruptible_timeout(bs->waitq, bs->done,
+			msecs_to_jiffies(SPI_TIMEOUT_MS));
+	if (ret == 0 && !bs->done) {
+		dev_err(&spi->dev, "transfer timed out\n");
+		return -ETIMEDOUT;
 	}
-
-	do {
-		cs = bcm2708_rd(bs, SPI_CS);
-	} while (!(cs & SPI_CS_DONE));
 
 	if (xfer->delay_usecs)
 		udelay(xfer->delay_usecs);
 
 	if (list_is_last(&xfer->transfer_list, &msg->transfers) ||
 			xfer->cs_change) {
-		bcm2708_wr(bs, SPI_CS, cs & ~SPI_CS_TA);
+		/* clear TA and interrupt flags */
+		bcm2708_wr(bs, SPI_CS, stp->cs);
 	}
 
-	msg->actual_length += xfer->len;
+	msg->actual_length += (xfer->len - bs->len);
 
 	return 0;
 }
@@ -445,7 +488,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	spin_lock_init(&bs->lock);
 	INIT_LIST_HEAD(&bs->queue);
-	/*init_waitqueue_head(&bs->waitq);*/
+	init_waitqueue_head(&bs->waitq);
 	INIT_WORK(&bs->work, bcm2708_work);
 
 	bs->base = ioremap(regs->start, resource_size(regs));
