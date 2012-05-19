@@ -4,6 +4,7 @@
  * Copyright (C) 2012 Chris Boot & Frank Buss
  *
  * This driver is inspired by:
+ * i2c-ocores.c, by Peter Korsgaard <jacmet@sunsite.dk>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +31,6 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
-/*#include <linux/log2.h>*/
 #include <linux/sched.h>
 #include <linux/wait.h>
 
@@ -66,7 +66,8 @@
 #define BSC_S_DONE		0x00000002
 #define BSC_S_TA		0x00000001
 
-#define I2C_TIMEOUT_MS	150 /* XXX */
+#define I2C_CLOCK_HZ	100000 /* FIXME: get from DT */
+#define I2C_TIMEOUT_MS	150
 
 #define DRV_NAME	"bcm2708_i2c"
 
@@ -131,14 +132,19 @@ static inline void bcm2708_bsc_reset(struct bcm2708_i2c *bi)
 
 static inline void bcm2708_bsc_setup(struct bcm2708_i2c *bi)
 {
+	unsigned long bus_hz;
+	u32 cdiv;
 	u32 c = BSC_C_I2CEN | BSC_C_INTD | BSC_C_ST | BSC_C_CLEAR_1;
+
+	bus_hz = clk_get_rate(bi->clk);
+	cdiv = bus_hz / I2C_CLOCK_HZ;
 
 	if (bi->msg->flags & I2C_M_RD)
 		c |= BSC_C_INTR | BSC_C_READ;
 	else
 		c |= BSC_C_INTT;
 
-	bcm2708_wr(bi, BSC_DIV, 250000000 / 50000);
+	bcm2708_wr(bi, BSC_DIV, cdiv);
 	bcm2708_wr(bi, BSC_A, bi->msg->addr);
 	bcm2708_wr(bi, BSC_DLEN, bi->msg->len);
 	bcm2708_wr(bi, BSC_C, c);
@@ -152,13 +158,16 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 	struct i2c_msg *msg = bi->msg;
 
 	spin_lock(&bi->lock);
+
+	if (bi->done)
+		goto out;
+
+	handled = true;
 	s = bcm2708_rd(bi, BSC_S);
 
 	if (s & (BSC_S_CLKT | BSC_S_ERR)) {
 		bcm2708_bsc_reset(bi);
 		bi->error = true;
-
-		dev_err(&bi->adapter.dev, "transfer error; S=%08x\n", s);
 
 		/* wake up our bh */
 		bi->done = true;
@@ -175,35 +184,32 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 		bcm2708_bsc_reset(bi);
 
 		if (bi->nmsgs) {
-			dev_dbg(&bi->adapter.dev, "next message\n");
 			/* advance to next message */
 			bi->msg++;
 			bi->pos = 0;
 			bcm2708_bsc_setup(bi);
 		} else {
-			dev_dbg(&bi->adapter.dev, "transfer complete\n");
 			/* wake up our bh */
 			bi->done = true;
 			wake_up_interruptible(&bi->waitq);
 		}
 	} else if (s & BSC_S_TXW) {
-		dev_dbg(&bi->adapter.dev, "filling TX FIFO\n");
 		/* fill the TX FIFO */
 		do {
 			bcm2708_wr(bi, BSC_FIFO, msg->buf[bi->pos++]);
 			s = bcm2708_rd(bi, BSC_S);
 		} while (s & BSC_S_TXD);
 	} else if (s & BSC_S_RXR) {
-		dev_dbg(&bi->adapter.dev, "draining RX FIFO\n");
 		/* drain the RX FIFO */
 		do {
 			msg->buf[bi->pos++] = bcm2708_rd(bi, BSC_FIFO);
 			s = bcm2708_rd(bi, BSC_S);
 		} while (s & BSC_S_RXD);
 	} else {
-		BUG();
+		handled = false;
 	}
 
+out:
 	spin_unlock(&bi->lock);
 
 	return handled ? IRQ_HANDLED : IRQ_NONE;
@@ -234,6 +240,10 @@ static int bcm2708_i2c_master_xfer(struct i2c_adapter *adap,
 			msecs_to_jiffies(I2C_TIMEOUT_MS));
 	if (ret == 0 && !bi->done) {
 		dev_err(&adap->dev, "transfer timed out\n");
+		spin_lock_irqsave(&bi->lock, flags);
+		bcm2708_bsc_reset(bi);
+		bi->done = true;
+		spin_unlock_irqrestore(&bi->lock, flags);
 		return -ETIMEDOUT;
 	}
 
@@ -318,8 +328,8 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	bi->clk = clk;
 	bi->done = true;
 
-	err = request_irq(irq, bcm2708_i2c_interrupt, 0, dev_name(&pdev->dev),
-			bi);
+	err = request_irq(irq, bcm2708_i2c_interrupt, IRQF_SHARED,
+			dev_name(&pdev->dev), bi);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
 		goto out_iounmap;

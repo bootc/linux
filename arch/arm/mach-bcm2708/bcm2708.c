@@ -531,8 +531,8 @@ static struct platform_device bcm2708_bsc0_device = {
 
 static struct resource bcm2708_bsc1_resources[] = {
 	{
-		.start = BSC0_BASE,
-		.end = BSC0_BASE + SZ_256 - 1,
+		.start = BSC1_BASE,
+		.end = BSC1_BASE + SZ_256 - 1,
 		.flags = IORESOURCE_MEM,
 	}, {
 		.start = INTERRUPT_I2C,
@@ -589,7 +589,7 @@ void __init bcm2708_init(void)
 
 	bcm_register_device(&bcm2708_spi_device);
 	bcm_register_device(&bcm2708_bsc0_device);
-	/*bcm_register_device(&bcm2708_bsc1_device);*/
+	bcm_register_device(&bcm2708_bsc1_device);
 
 #ifdef CONFIG_BCM2708_VCMEM
 	{
