@@ -226,6 +226,12 @@ static struct clk_lookup lookups[] = {
 	 }, {	/* SPI */
 		 .dev_id = "bcm2708_spi.0",
 		 .clk = &sdhost_clk,
+	 }, {	/* BSC0 */
+		 .dev_id = "bcm2708_i2c.0",
+		 .clk = &sdhost_clk,
+	 }, {	/* BSC1 */
+		 .dev_id = "bcm2708_i2c.1",
+		 .clk = &sdhost_clk,
 	 }
 };
 
@@ -503,6 +509,45 @@ static struct spi_board_info bcm2708_spi_devices[] = {
 	}
 };
 
+static struct resource bcm2708_bsc0_resources[] = {
+	{
+		.start = BSC0_BASE,
+		.end = BSC0_BASE + SZ_256 - 1,
+		.flags = IORESOURCE_MEM,
+	}, {
+		.start = INTERRUPT_I2C,
+		.end = INTERRUPT_I2C,
+		.flags = IORESOURCE_IRQ,
+	}
+};
+
+static struct platform_device bcm2708_bsc0_device = {
+	.name = "bcm2708_i2c",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(bcm2708_bsc0_resources),
+	.resource = bcm2708_bsc0_resources,
+};
+
+
+static struct resource bcm2708_bsc1_resources[] = {
+	{
+		.start = BSC0_BASE,
+		.end = BSC0_BASE + SZ_256 - 1,
+		.flags = IORESOURCE_MEM,
+	}, {
+		.start = INTERRUPT_I2C,
+		.end = INTERRUPT_I2C,
+		.flags = IORESOURCE_IRQ,
+	}
+};
+
+static struct platform_device bcm2708_bsc1_device = {
+	.name = "bcm2708_i2c",
+	.id = 1,
+	.num_resources = ARRAY_SIZE(bcm2708_bsc1_resources),
+	.resource = bcm2708_bsc1_resources,
+};
+
 int __init bcm_register_device(struct platform_device *pdev)
 {
 	int ret;
@@ -543,6 +588,8 @@ void __init bcm2708_init(void)
 		bcm_register_device(&bcm2708_alsa_devices[i]);
 
 	bcm_register_device(&bcm2708_spi_device);
+	bcm_register_device(&bcm2708_bsc0_device);
+	/*bcm_register_device(&bcm2708_bsc1_device);*/
 
 #ifdef CONFIG_BCM2708_VCMEM
 	{
