@@ -88,6 +88,32 @@ struct bcm2708_spi_state {
 	u16 cdiv;
 };
 
+/*
+ * This function sets the ALT mode on the SPI pins so that we can use them with
+ * the SPI hardware.
+ *
+ * FIXME: This is a hack. Use pinmux / pinctrl.
+ */
+static void bcm2708_init_pinmode(void)
+{
+#define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
+#define SET_GPIO_ALT(g,a) *(gpio+(((g)/10))) |= (((a)<=3?(a)+4:(a)==4?3:2)<<(((g)%10)*3))
+
+	int pin;
+	u32 *gpio = ioremap(0x20200000, SZ_16K);
+
+	/* SPI is on GPIO 7..11 */
+	for (pin = 7; pin <= 11; pin++) {
+		INP_GPIO(pin);		/* set mode to GPIO input first */
+		SET_GPIO_ALT(pin, 0);	/* set mode to ALT 0 */
+	}
+
+	iounmap(gpio);
+
+#undef INP_GPIO
+#undef SET_GPIO_ALT
+}
+
 static inline u32 bcm2708_rd(struct bcm2708_spi *bs, unsigned reg)
 {
 	return readl(bs->base + reg);
@@ -396,6 +422,8 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "could not find clk: %ld\n", PTR_ERR(clk));
 		return PTR_ERR(clk);
 	}
+
+	bcm2708_init_pinmode();
 
 	master = spi_alloc_master(&pdev->dev, sizeof(*bs));
 	if (!master) {
