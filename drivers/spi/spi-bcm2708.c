@@ -84,12 +84,11 @@ struct bcm2708_spi {
 	struct list_head queue;
 	struct workqueue_struct *workq;
 	struct work_struct work;
-	wait_queue_head_t waitq;
+	struct completion done;
 
 	const u8 *tx_buf;
 	u8 *rx_buf;
 	int len;
-	bool done;
 };
 
 struct bcm2708_spi_state {
@@ -184,8 +183,7 @@ static irqreturn_t bcm2708_spi_interrupt(int irq, void *dev_id)
 			}
 
 			/* wake up our bh */
-			bs->done = true;
-			wake_up_interruptible(&bs->waitq);
+			complete(&bs->done);
 		}
 	} else if (cs & SPI_CS_RXR) {
 		/* read 12 bytes of data */
@@ -289,19 +287,19 @@ static int bcm2708_process_transfer(struct bcm2708_spi *bs,
 		stp = spi->controller_state;
 	}
 
+	INIT_COMPLETION(bs->done);
 	bs->tx_buf = xfer->tx_buf;
 	bs->rx_buf = xfer->rx_buf;
 	bs->len = xfer->len;
-	bs->done = false;
 
 	cs = stp->cs | SPI_CS_INTR | SPI_CS_INTD | SPI_CS_TA;
 
 	bcm2708_wr(bs, SPI_CLK, stp->cdiv);
 	bcm2708_wr(bs, SPI_CS, cs);
 
-	ret = wait_event_interruptible_timeout(bs->waitq, bs->done,
+	ret = wait_for_completion_timeout(&bs->done,
 			msecs_to_jiffies(SPI_TIMEOUT_MS));
-	if (ret == 0 && !bs->done) {
+	if (ret == 0) {
 		dev_err(&spi->dev, "transfer timed out\n");
 		return -ETIMEDOUT;
 	}
@@ -488,7 +486,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	spin_lock_init(&bs->lock);
 	INIT_LIST_HEAD(&bs->queue);
-	init_waitqueue_head(&bs->waitq);
+	init_completion(&bs->done);
 	INIT_WORK(&bs->work, bcm2708_work);
 
 	bs->base = ioremap(regs->start, resource_size(regs));
