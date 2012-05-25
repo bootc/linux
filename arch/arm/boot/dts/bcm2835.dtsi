@@ -522,6 +522,18 @@
 			pinmap = "SPI0";
 		};
 
+		bsc0 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c";
+			reg = <0x205000 0x18>;
+			interrupt-parent = <&vic2>;
+			interrupts = <21>;
+
+			pinctrl = <&pins>;
+			pinmap = "BSC0";
+		};
+
 		/* Auxiliary device disabled by default */
 		/*
 		uart1 {
@@ -534,6 +546,18 @@
 			pinmap = "UART1";
 		};
 		*/
+
+		bsc1 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c";
+			reg = <0x804000 0x18>;
+			interrupt-parent = <&vic2>;
+			interrupts = <21>;
+
+			pinctrl = <&pins>;
+			pinmap = "BSC1";
+		};
 
 		usb {
 			compatible = "broadcom,bcm2835-usb", "broadcom,bcm2708-usb", "synopsys,designware-hs-otg2-host";
