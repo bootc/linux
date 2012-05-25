@@ -79,12 +79,11 @@ struct bcm2708_i2c {
 	int irq;
 	struct clk *clk;
 
-	wait_queue_head_t waitq;
+	struct completion done;
 
 	struct i2c_msg *msg;
 	int pos;
 	int nmsgs;
-	bool done;
 	bool error;
 };
 
@@ -159,9 +158,6 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 
 	spin_lock(&bi->lock);
 
-	if (bi->done)
-		goto out;
-
 	handled = true;
 	s = bcm2708_rd(bi, BSC_S);
 
@@ -170,8 +166,7 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 		bi->error = true;
 
 		/* wake up our bh */
-		bi->done = true;
-		wake_up_interruptible(&bi->waitq);
+		complete(&bi->done);
 	} else if (s & BSC_S_DONE) {
 		bi->nmsgs--;
 
@@ -190,8 +185,7 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 			bcm2708_bsc_setup(bi);
 		} else {
 			/* wake up our bh */
-			bi->done = true;
-			wake_up_interruptible(&bi->waitq);
+			complete(&bi->done);
 		}
 	} else if (s & BSC_S_TXW) {
 		/* fill the TX FIFO */
@@ -209,7 +203,6 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 		handled = false;
 	}
 
-out:
 	spin_unlock(&bi->lock);
 
 	return handled ? IRQ_HANDLED : IRQ_NONE;
@@ -222,27 +215,24 @@ static int bcm2708_i2c_master_xfer(struct i2c_adapter *adap,
 	unsigned long flags;
 	int ret;
 
-	BUG_ON(!bi->done);
-
 	spin_lock_irqsave(&bi->lock, flags);
 
+	INIT_COMPLETION(bi->done);
 	bi->msg = msgs;
 	bi->pos = 0;
 	bi->nmsgs = num;
-	bi->done = false;
 	bi->error = false;
 
 	spin_unlock_irqrestore(&bi->lock, flags);
 
 	bcm2708_bsc_setup(bi);
 
-	ret = wait_event_interruptible_timeout(bi->waitq, bi->done,
+	ret = wait_for_completion_timeout(&bi->done,
 			msecs_to_jiffies(I2C_TIMEOUT_MS));
-	if (ret == 0 && !bi->done) {
+	if (ret == 0) {
 		dev_err(&adap->dev, "transfer timed out\n");
 		spin_lock_irqsave(&bi->lock, flags);
 		bcm2708_bsc_reset(bi);
-		bi->done = true;
 		spin_unlock_irqrestore(&bi->lock, flags);
 		return -ETIMEDOUT;
 	}
@@ -316,7 +306,7 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	}
 
 	spin_lock_init(&bi->lock);
-	init_waitqueue_head(&bi->waitq);
+	init_completion(&bi->done);
 
 	bi->base = ioremap(regs->start, resource_size(regs));
 	if (!bi->base) {
@@ -326,7 +316,6 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 
 	bi->irq = irq;
 	bi->clk = clk;
-	bi->done = true;
 
 	err = request_irq(irq, bcm2708_i2c_interrupt, IRQF_SHARED,
 			dev_name(&pdev->dev), bi);
