@@ -374,6 +374,12 @@ static int __devinit bcm_mbox_probe(struct platform_device *of_dev)
 
 	/* register the interrupt handler */
 	mbox->irq = irq_of_parse_and_map(node, 0);
+	if (mbox->irq <= 0) {
+		dev_err(mbox->dev, "no IRQ");
+		spin_unlock_irq(&mbox->lock);
+		ret = -ENXIO;
+		goto err_unmap;
+	}
 	mbox->irqaction.name = dev_name(mbox->dev);
 	mbox->irqaction.flags = IRQF_SHARED | IRQF_IRQPOLL;
 	mbox->irqaction.dev_id = mbox;
@@ -447,10 +453,11 @@ struct bcm_mbox_chan *bcm_mbox_get(struct device_node *node,
 	int ret;
 
 	if (node == NULL || pmbox == NULL || pchan == NULL)
-		return ERR_PTR(-EFAULT);
+		return ERR_PTR(-EINVAL);
 
-	index = ~0;
-	of_property_read_u32(node, pchan, &index);
+	if (of_property_read_u32(node, pchan, &index))
+		return ERR_PTR(-EINVAL);
+
 	if (index > MAX_CHAN)
 		return ERR_PTR(-EOVERFLOW);
 

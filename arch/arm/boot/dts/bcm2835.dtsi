@@ -560,14 +560,13 @@
 		};
 
 		usb {
-			compatible = "broadcom,bcm2835-usb", "broadcom,bcm2708-usb", "synopsys,designware-hs-otg2-host";
+			compatible = "broadcom,bcm2835-usb", "broadcom,bcm2708-usb", "synopsys,designware-hs-otg2-host", "broadcom,bcm2708-power-user";
 			reg = <0x980000 0x20000>;
 			interrupt-parent = <&vic1>;
 			interrupts = <9>;
 
 			vc_power = <&power>;
 			vc_index = <3>;
-			dwc-otg,lpm_enable = <0>;
 		};
 	};
 };

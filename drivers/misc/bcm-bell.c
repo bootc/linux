@@ -135,6 +135,12 @@ static int __devinit bcm_bell_probe(struct platform_device *of_dev)
 	/* register the interrupt handler */
 	if (bell->read) {
 		bell->irq = irq_of_parse_and_map(node, 0);
+		if (bell->irq <= 0) {
+			dev_err(bell->dev, "no IRQ");
+			spin_unlock_irq(&bell->lock);
+			ret = -ENXIO;
+			goto err_unmap;
+		}
 		bell->irqaction.name = dev_name(bell->dev);
 		bell->irqaction.flags = IRQF_SHARED | IRQF_IRQPOLL;
 		bell->irqaction.dev_id = bell;
@@ -189,7 +195,7 @@ struct bcm_bell *bcm_bell_get(struct device_node *node, const char *pbell)
 	int ret;
 
 	if (node == NULL || pbell == NULL)
-		return ERR_PTR(-EFAULT);
+		return ERR_PTR(-EINVAL);
 
 	bell_node = of_parse_phandle(node, pbell, 0);
 	if (bell_node == NULL)

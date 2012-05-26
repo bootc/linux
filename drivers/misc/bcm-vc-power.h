@@ -12,16 +12,18 @@
 
 struct bcm_vc_power_dev;
 
+bool bcm_vc_power_is_user(struct device_node *node);
+
 /*
  * @node: calling node
- * @pname: property name for power phandle
- * @pindex: property name for device index
+ * @pname: property name for power phandle (NULL for default)
+ * @pindex: property name for device index (NULL for default)
  *
  * Returns an error pointer if not found, otherwise holds a reference to the
  * device that must be put back with bcm_vc_power_put.
  */
 struct bcm_vc_power_dev *bcm_vc_power_get(struct device_node *node,
-	char *pname, char *pindex);
+	const char *pname, const char *pindex);
 void bcm_vc_power_put(struct bcm_vc_power_dev *dev);
 
 int bcm_vc_power_on(struct bcm_vc_power_dev *dev);

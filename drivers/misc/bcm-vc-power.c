@@ -44,6 +44,7 @@ struct bcm_vc_power_mgr {
 	struct mutex lock;
 	struct bcm_mbox_chan *mbox;
 	u32 state;
+	bool open[MAX_POWER_DEV];
 };
 
 struct bcm_vc_power_dev {
@@ -140,8 +141,16 @@ static int bcm_vc_power_mgr_remove(struct platform_device *of_dev)
 	return 0;
 }
 
+bool bcm_vc_power_is_user(struct device_node *node)
+{
+	if (node == NULL)
+		return false;
+
+	return of_device_is_compatible(node, "broadcom,bcm2708-power-user");
+}
+
 struct bcm_vc_power_dev *bcm_vc_power_get(struct device_node *node,
-	char *pname, char *pindex)
+	const char *pname, const char *pindex)
 {
 	struct device_node *power_node;
 	struct platform_device *pdev;
@@ -150,11 +159,18 @@ struct bcm_vc_power_dev *bcm_vc_power_get(struct device_node *node,
 	u32 index;
 	int ret;
 
-	if (node == NULL || pname == NULL || pindex == NULL)
-		return ERR_PTR(-EFAULT);
+	if (node == NULL)
+		return ERR_PTR(-EINVAL);
 
-	index = ~0;
-	of_property_read_u32(node, pindex, &index);
+	if (pname == NULL)
+		pname = "vc_power";
+
+	if (pindex == NULL)
+		pindex = "vc_index";
+
+	if (of_property_read_u32(node, pindex, &index))
+		return ERR_PTR(-EINVAL);
+
 	if (index > MAX_POWER_DEV)
 		return ERR_PTR(-EOVERFLOW);
 
@@ -197,20 +213,54 @@ struct bcm_vc_power_dev *bcm_vc_power_get(struct device_node *node,
 		goto put_dev;
 	}
 
+	mutex_lock(&mgr->lock);
+	if (mgr->open[index]) {
+		ret = -EBUSY;
+		goto out_free;
+	}
+	mgr->open[index] = true;
+	mutex_unlock(&mgr->lock);
+
 	dev->mgr = mgr;
 	dev->index = index;
 	return dev;
 
+out_free:
+	kfree(dev);
 put_dev:
 	put_device(&pdev->dev);
 	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL_GPL(bcm_vc_power_get);
 
+static void __bcm_vc_power_off(struct bcm_vc_power_dev *dev)
+{
+	struct bcm_vc_power_mgr *mgr;
+	bool state;
+
+	mgr = dev->mgr;
+	state = mgr->state & BIT(dev->index);
+	if (!state) {
+		dev_dbg(mgr->dev, "power off %d\n", dev->index);
+
+		mgr->state &= ~(BIT(dev->index));
+		bcm_mbox_write(mgr->mbox, PWR_TO_MBOX(mgr->state));
+	}
+}
+
 void bcm_vc_power_put(struct bcm_vc_power_dev *dev)
 {
+	struct bcm_vc_power_mgr *mgr;
+
 	if (dev != NULL && dev->mgr != NULL) {
-		put_device(dev->mgr->dev);
+		mgr = dev->mgr;
+
+		mutex_lock(&mgr->lock);
+		__bcm_vc_power_off(dev);
+		dev->mgr->open[dev->index] = false;
+		mutex_unlock(&mgr->lock);
+
+		put_device(mgr->dev);
 	} else  {
 		WARN_ON(1);
 	}
@@ -268,20 +318,13 @@ EXPORT_SYMBOL_GPL(bcm_vc_power_state);
 void bcm_vc_power_off(struct bcm_vc_power_dev *dev)
 {
 	struct bcm_vc_power_mgr *mgr;
-	bool state;
 
 	if (dev == NULL || dev->mgr == NULL)
 		return;
 	mgr = dev->mgr;
 
 	mutex_lock(&mgr->lock);
-	state = mgr->state & BIT(dev->index);
-	if (!state) {
-		dev_dbg(mgr->dev, "power off %d\n", dev->index);
-
-		mgr->state &= ~(BIT(dev->index));
-		bcm_mbox_write(mgr->mbox, PWR_TO_MBOX(mgr->state));
-	}
+	__bcm_vc_power_off(dev);
 	mutex_unlock(&mgr->lock);
 }
 EXPORT_SYMBOL_GPL(bcm_vc_power_off);
