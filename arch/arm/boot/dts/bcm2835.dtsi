@@ -525,7 +525,7 @@
 		bsc0 {
 			#address-cells = <1>;
 			#size-cells = <0>;
-			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c";
+			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c", "broadcom,bcm2835-pinctrl-device", "broadcom,bcm2708-pinctrl-device";
 			reg = <0x205000 0x18>;
 			interrupt-parent = <&vic2>;
 			interrupts = <21>;
@@ -550,7 +550,7 @@
 		bsc1 {
 			#address-cells = <1>;
 			#size-cells = <0>;
-			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c";
+			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c", "broadcom,bcm2835-pinctrl-device", "broadcom,bcm2708-pinctrl-device";
 			reg = <0x804000 0x18>;
 			interrupt-parent = <&vic2>;
 			interrupts = <21>;

@@ -37,6 +37,7 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_i2c.h>
+#include <linux/pinctrl/consumer.h>
 
 /* BSC register offsets */
 #define BSC_C			0x00
@@ -83,6 +84,7 @@ struct bcm2708_i2c {
 	void __iomem *base;
 	int irq;
 	struct clk *clk;
+	struct pinctrl *pctl;
 	unsigned long bus_hz;
 
 	struct completion done;
@@ -92,32 +94,6 @@ struct bcm2708_i2c {
 	int nmsgs;
 	bool error;
 };
-
-/*
- * This function sets the ALT mode on the I2C pins so that we can use them with
- * the BSC hardware.
- *
- * FIXME: This is a hack. Use pinmux / pinctrl.
- */
-static void bcm2708_i2c_init_pinmode(void)
-{
-#define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
-#define SET_GPIO_ALT(g,a) *(gpio+(((g)/10))) |= (((a)<=3?(a)+4:(a)==4?3:2)<<(((g)%10)*3))
-
-	int pin;
-	u32 *gpio = ioremap(0x20200000, SZ_16K);
-
-	/* BSC0 is on GPIO 0 & 1, BSC1 is on GPIO 2 & 3 */
-	for (pin = 0; pin <= 3; pin++) {
-		INP_GPIO(pin);		/* set mode to GPIO input first */
-		SET_GPIO_ALT(pin, 0);	/* set mode to ALT 0 */
-	}
-
-	iounmap(gpio);
-
-#undef INP_GPIO
-#undef SET_GPIO_ALT
-}
 
 static inline u32 bcm2708_rd(struct bcm2708_i2c *bi, unsigned reg)
 {
@@ -259,6 +235,7 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	struct resource iomem;
 	int irq, err = -ENOMEM;
 	struct clk *clk;
+	struct pinctrl *pctl;
 	struct bcm2708_i2c *bi;
 	struct i2c_adapter *adap;
 
@@ -280,11 +257,16 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 		return PTR_ERR(clk);
 	}
 
-	bcm2708_i2c_init_pinmode();
+	pctl = pinctrl_get_select_default(&pdev->dev);
+	if (IS_ERR(pctl)) {
+		err = PTR_ERR(pctl);
+		dev_err(&pdev->dev, "could not set up pinctrl: %d\n", err);
+		goto out_clk_put;
+	}
 
 	bi = kzalloc(sizeof(*bi), GFP_KERNEL);
 	if (!bi)
-		goto out_clk_put;
+		goto out_pinctrl_put;
 
 	platform_set_drvdata(pdev, bi);
 
@@ -314,6 +296,7 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	bi->iomem = iomem;
 	bi->irq = irq;
 	bi->clk = clk;
+	bi->pctl = pctl;
 
 	err = request_irq(irq, bcm2708_i2c_interrupt, IRQF_SHARED,
 			dev_name(&pdev->dev), bi);
@@ -348,6 +331,8 @@ out_release_region:
 	release_region(iomem.start, resource_size(&iomem));
 out_free_bi:
 	kfree(bi);
+out_pinctrl_put:
+	pinctrl_put(pctl);
 out_clk_put:
 	clk_put(clk);
 	return err;
@@ -363,6 +348,7 @@ static int __devexit bcm2708_i2c_remove(struct platform_device *pdev)
 	free_irq(bi->irq, bi);
 	iounmap(bi->base);
 	release_region(bi->iomem.start, resource_size(&bi->iomem));
+	pinctrl_put(bi->pctl);
 	clk_unprepare(bi->clk);
 	clk_put(bi->clk);
 	kfree(bi);
