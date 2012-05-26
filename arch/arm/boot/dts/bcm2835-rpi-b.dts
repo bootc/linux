@@ -113,6 +113,14 @@
 			/* 53 */	"",		"",	"",			"",		"",		"",		"",		"";
 		};
 
+		bsc0 {
+			clock-frequency = <100000>;
+		};
+
+		bsc1 {
+			clock-frequency = <100000>;
+		};
+
 		usb {
 			hub {
 				compatible = "usb,hub", "usb,device";
