@@ -71,7 +71,7 @@
 #define BSC_S_DONE		0x00000002
 #define BSC_S_TA		0x00000001
 
-#define I2C_CLOCK_HZ	100000 /* FIXME: get from DT */
+#define I2C_CLOCK_HZ	100000	/* default if no clock-frequency in DT */
 #define I2C_TIMEOUT_MS	150
 
 #define DRV_NAME	"bcm2708_i2c"
@@ -85,7 +85,6 @@ struct bcm2708_i2c {
 	int irq;
 	struct clk *clk;
 	struct pinctrl *pctl;
-	unsigned long bus_hz;
 
 	struct completion done;
 
@@ -113,17 +112,13 @@ static inline void bcm2708_bsc_reset(struct bcm2708_i2c *bi)
 
 static inline void bcm2708_bsc_setup(struct bcm2708_i2c *bi)
 {
-	u32 cdiv;
 	u32 c = BSC_C_I2CEN | BSC_C_INTD | BSC_C_ST | BSC_C_CLEAR_1;
-
-	cdiv = bi->bus_hz / I2C_CLOCK_HZ;
 
 	if (bi->msg->flags & I2C_M_RD)
 		c |= BSC_C_INTR | BSC_C_READ;
 	else
 		c |= BSC_C_INTT;
 
-	bcm2708_wr(bi, BSC_DIV, cdiv);
 	bcm2708_wr(bi, BSC_A, bi->msg->addr);
 	bcm2708_wr(bi, BSC_DLEN, bi->msg->len);
 	bcm2708_wr(bi, BSC_C, c);
@@ -238,6 +233,8 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	struct pinctrl *pctl;
 	struct bcm2708_i2c *bi;
 	struct i2c_adapter *adap;
+	unsigned long clk_hz;
+	u32 bus_hz;
 
 	err = of_address_to_resource(pdev->dev.of_node, 0, &iomem);
 	if (err) {
@@ -306,9 +303,19 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	}
 
 	clk_prepare(clk);
-	bi->bus_hz = clk_get_rate(bi->clk);
+	clk_hz = clk_get_rate(bi->clk);
+
+	err = of_property_read_u32(pdev->dev.of_node, "clock-frequency",
+			&bus_hz);
+	if (err) {
+		bus_hz = I2C_CLOCK_HZ;
+		dev_warn(&pdev->dev,
+			"Missing parameter 'clock-frequency'; assuming %d KHz",
+			bus_hz / 1000);
+	}
 
 	bcm2708_bsc_reset(bi);
+	bcm2708_wr(bi, BSC_DIV, clk_hz / bus_hz);
 
 	err = i2c_add_adapter(adap);
 	if (err < 0) {
