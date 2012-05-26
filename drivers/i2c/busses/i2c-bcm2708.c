@@ -335,8 +335,8 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 
 	of_i2c_register_devices(adap);
 
-	dev_info(&pdev->dev, "BSC%d Controller at 0x%08lx (irq %d)\n",
-		pdev->id, (unsigned long)iomem.start, irq);
+	dev_info(&pdev->dev, "Broadcom BCM2708 BSC controller at 0x%08lx (irq %d)\n",
+		(unsigned long)iomem.start, irq);
 
 	return 0;
 
