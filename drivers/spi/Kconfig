@@ -77,6 +77,8 @@ config SPI_ATMEL
 config SPI_BCM2708
 	tristate "BCM2708 SPI controller driver (SPI0)"
 	depends on MACH_BCM2708
+	select PINCONF
+	select PINCTRL_BCM2708
 	help
 	  This selects a driver for the Broadcom BCM2708 SPI master (SPI0). This
 	  driver is not compatible with the "Universal SPI Master" or the SPI slave

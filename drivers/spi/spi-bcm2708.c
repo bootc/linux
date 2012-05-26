@@ -38,6 +38,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/pinctrl/consumer.h>
 
 /* SPI register offsets */
 #define SPI_CS			0x00
@@ -83,6 +84,7 @@ struct bcm2708_spi {
 	void __iomem *base;
 	int irq;
 	struct clk *clk;
+	struct pinctrl *pctl;
 	bool stopping;
 
 	struct list_head queue;
@@ -99,32 +101,6 @@ struct bcm2708_spi_state {
 	u32 cs;
 	u16 cdiv;
 };
-
-/*
- * This function sets the ALT mode on the SPI pins so that we can use them with
- * the SPI hardware.
- *
- * FIXME: This is a hack. Use pinmux / pinctrl.
- */
-static void bcm2708_init_pinmode(void)
-{
-#define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
-#define SET_GPIO_ALT(g,a) *(gpio+(((g)/10))) |= (((a)<=3?(a)+4:(a)==4?3:2)<<(((g)%10)*3))
-
-	int pin;
-	u32 *gpio = ioremap(0x20200000, SZ_16K);
-
-	/* SPI is on GPIO 7..11 */
-	for (pin = 7; pin <= 11; pin++) {
-		INP_GPIO(pin);		/* set mode to GPIO input first */
-		SET_GPIO_ALT(pin, 0);	/* set mode to ALT 0 */
-	}
-
-	iounmap(gpio);
-
-#undef INP_GPIO
-#undef SET_GPIO_ALT
-}
 
 static inline u32 bcm2708_rd(struct bcm2708_spi *bs, unsigned reg)
 {
@@ -447,6 +423,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 	struct resource iomem;
 	int irq, err;
 	struct clk *clk;
+	struct pinctrl *pctl;
 	struct spi_master *master;
 	struct bcm2708_spi *bs;
 
@@ -468,13 +445,18 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		return PTR_ERR(clk);
 	}
 
-	bcm2708_init_pinmode();
+	pctl = pinctrl_get_select_default(&pdev->dev);
+	if (IS_ERR(pctl)) {
+		err = PTR_ERR(pctl);
+		dev_err(&pdev->dev, "could not set up pinctrl: %d\n", err);
+		goto out_clk_put;
+	}
 
 	master = spi_alloc_master(&pdev->dev, sizeof(*bs));
 	if (!master) {
 		dev_err(&pdev->dev, "spi_alloc_master() failed\n");
 		err = -ENOMEM;
-		goto out_clk_put;
+		goto out_pinctrl_put;
 	}
 
 	/* the spi->mode bits understood by this driver: */
@@ -517,6 +499,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 	bs->iomem = iomem;
 	bs->irq = irq;
 	bs->clk = clk;
+	bs->pctl = pctl;
 	bs->stopping = false;
 
 	err = request_irq(irq, bcm2708_spi_interrupt, 0, dev_name(&pdev->dev),
@@ -551,6 +534,8 @@ out_release_region:
 	release_region(iomem.start, resource_size(&iomem));
 out_master_put:
 	spi_master_put(master);
+out_pinctrl_put:
+	pinctrl_put(pctl);
 out_clk_put:
 	clk_put(clk);
 	return err;
@@ -569,6 +554,7 @@ static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
 
 	flush_work_sync(&bs->work);
 
+	pinctrl_put(bs->pctl);
 	clk_unprepare(bs->clk);
 	clk_put(bs->clk);
 	free_irq(bs->irq, master);

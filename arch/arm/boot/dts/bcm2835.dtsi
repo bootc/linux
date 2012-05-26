@@ -513,7 +513,7 @@
 		spi {
 			#address-cells = <1>;
 			#size-cells = <0>;
-			compatible = "broadcom,bcm2835-spi", "broadcom,bcm2708-spi";
+			compatible = "broadcom,bcm2835-spi", "broadcom,bcm2708-spi", "broadcom,bcm2835-pinctrl-device", "broadcom,bcm2708-pinctrl-device";
 			reg = <0x204000 0x18>;
 			interrupt-parent = <&vic2>;
 			interrupts = <22>;
