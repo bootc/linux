@@ -24,7 +24,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/spinlock.h>
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
@@ -34,7 +33,7 @@
 #include <linux/delay.h>
 #include <linux/log2.h>
 #include <linux/sched.h>
-#include <linux/wait.h>
+#include <linux/completion.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
@@ -75,31 +74,22 @@
 #define SPI_CS_CS_01		0x00000001
 
 #define SPI_TIMEOUT_MS	150
+#define SPI_MODE_BITS	(SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_NO_CS)
 
 #define DRV_NAME	"bcm2708_spi"
 
 struct bcm2708_spi {
-	spinlock_t lock;
 	struct resource iomem;
 	void __iomem *base;
 	int irq;
 	struct clk *clk;
 	struct pinctrl *pctl;
-	bool stopping;
 
-	struct list_head queue;
-	struct workqueue_struct *workq;
-	struct work_struct work;
 	struct completion done;
 
 	const u8 *tx_buf;
 	u8 *rx_buf;
 	int len;
-};
-
-struct bcm2708_spi_state {
-	u32 cs;
-	u16 cdiv;
 };
 
 static inline u32 bcm2708_rd(struct bcm2708_spi *bs, unsigned reg)
@@ -141,26 +131,16 @@ static irqreturn_t bcm2708_spi_interrupt(int irq, void *dev_id)
 {
 	struct spi_master *master = dev_id;
 	struct bcm2708_spi *bs = spi_master_get_devdata(master);
-	u32 cs;
-
-	spin_lock(&bs->lock);
-
-	cs = bcm2708_rd(bs, SPI_CS);
+	u32 cs = bcm2708_rd(bs, SPI_CS);
 
 	if (cs & SPI_CS_DONE) {
 		if (bs->len) { /* first interrupt in a transfer */
 			/* fill the TX fifo with up to 16 bytes */
 			bcm2708_wr_fifo(bs, 16);
 		} else { /* transfer complete */
-			/* disable interrupts */
+			/* disable SPI interrupts */
 			cs &= ~(SPI_CS_INTR | SPI_CS_INTD);
 			bcm2708_wr(bs, SPI_CS, cs);
-
-			/* drain RX FIFO */
-			while (cs & SPI_CS_RXD) {
-				bcm2708_rd_fifo(bs, 1);
-				cs = bcm2708_rd(bs, SPI_CS);
-			}
 
 			/* wake up our bh */
 			complete(&bs->done);
@@ -173,249 +153,179 @@ static irqreturn_t bcm2708_spi_interrupt(int irq, void *dev_id)
 		bcm2708_wr_fifo(bs, 12);
 	}
 
-	spin_unlock(&bs->lock);
-
 	return IRQ_HANDLED;
 }
 
-static int bcm2708_setup_state(struct spi_master *master,
-		struct device *dev, struct bcm2708_spi_state *state,
-		u32 hz, u8 csel, u8 mode, u8 bpw)
+static int bcm2708_spi_check_transfer(struct spi_device *spi,
+		struct spi_transfer *tfr)
 {
-	struct bcm2708_spi *bs = spi_master_get_devdata(master);
-	int cdiv;
-	unsigned long bus_hz;
-	u32 cs = 0;
+	u8 bpw;
 
-	bus_hz = clk_get_rate(bs->clk);
-
-	if (hz >= bus_hz) {
-		cdiv = 2; /* bus_hz / 2 is as fast as we can go */
-	} else if (hz) {
-		cdiv = DIV_ROUND_UP(bus_hz, hz);
-
-		/* CDIV must be a power of 2, so round up */
-		cdiv = roundup_pow_of_two(cdiv);
-
-		if (cdiv > 65536) {
-			dev_dbg(dev,
-				"setup: %d Hz too slow, cdiv %u; min %ld Hz\n",
-				hz, cdiv, bus_hz / 65536);
-			return -EINVAL;
-		} else if (cdiv == 65536) {
-			cdiv = 0;
-		} else if (cdiv == 1) {
-			cdiv = 2; /* 1 gets rounded down to 0; == 65536 */
-		}
-	} else {
-		cdiv = 0;
-	}
-
+	bpw = tfr ? tfr->bits_per_word : spi->bits_per_word;
 	switch (bpw) {
 	case 8:
 		break;
 	default:
-		dev_dbg(dev, "setup: invalid bits_per_word %u (must be 8)\n",
-			bpw);
+		dev_err(&spi->dev, "unsupported bits_per_word=%d\n", bpw);
 		return -EINVAL;
 	}
 
-	if (mode & SPI_CPOL)
-		cs |= SPI_CS_CPOL;
-	if (mode & SPI_CPHA)
-		cs |= SPI_CS_CPHA;
-
-	if (!(mode & SPI_NO_CS)) {
-		if (mode & SPI_CS_HIGH) {
-			cs |= SPI_CS_CSPOL;
-			cs |= SPI_CS_CSPOL0 << csel;
-		}
-
-		cs |= csel;
-	} else {
-		cs |= SPI_CS_CS_10 | SPI_CS_CS_01;
-	}
-
-	if (state) {
-		state->cs = cs;
-		state->cdiv = cdiv;
+	if (!(spi->mode & SPI_NO_CS) &&
+			(spi->chip_select > spi->master->num_chipselect)) {
+		dev_err(&spi->dev,
+				"invalid chipselect %u\n",
+				spi->chip_select);
+		return -EINVAL;
 	}
 
 	return 0;
 }
 
-static int bcm2708_process_transfer(struct bcm2708_spi *bs,
-		struct spi_message *msg, struct spi_transfer *xfer)
+static int bcm2708_spi_start_transfer(struct spi_device *spi,
+		struct spi_transfer *tfr)
 {
-	struct spi_device *spi = msg->spi;
-	struct bcm2708_spi_state state, *stp;
-	int ret;
-	u32 cs;
+	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
+	unsigned long spi_hz, clk_hz, cdiv;
+	u32 cs = SPI_CS_INTR | SPI_CS_INTD | SPI_CS_TA;
 
-	if (bs->stopping)
-		return -ESHUTDOWN;
+	spi_hz = tfr->speed_hz ? tfr->speed_hz : spi->max_speed_hz;
+	clk_hz = clk_get_rate(bs->clk);
 
-	if (xfer->bits_per_word || xfer->speed_hz) {
-		ret = bcm2708_setup_state(spi->master, &spi->dev, &state,
-			spi->max_speed_hz, spi->chip_select, spi->mode,
-			spi->bits_per_word);
-		if (ret)
-			return ret;
+	if (spi_hz >= clk_hz / 2) {
+		cdiv = 2; /* clk_hz/2 is the fastest we can go */
+	} else if (spi_hz) {
+		/* CDIV must be a power of two */
+		cdiv = roundup_pow_of_two(DIV_ROUND_UP(clk_hz, spi_hz));
 
-		stp = &state;
+		if (cdiv >= 65536)
+			cdiv = 0; /* 0 is the slowest we can go */
 	} else {
-		stp = spi->controller_state;
+		cdiv = 0; /* 0 is the slowest we can go */
+	}
+
+	if (spi->mode & SPI_CPOL)
+		cs |= SPI_CS_CPOL;
+	if (spi->mode & SPI_CPHA)
+		cs |= SPI_CS_CPHA;
+
+	if (!(spi->mode & SPI_NO_CS)) {
+		if (spi->mode & SPI_CS_HIGH) {
+			cs |= SPI_CS_CSPOL;
+			cs |= SPI_CS_CSPOL0 << spi->chip_select;
+		}
+
+		cs |= spi->chip_select;
 	}
 
 	INIT_COMPLETION(bs->done);
-	bs->tx_buf = xfer->tx_buf;
-	bs->rx_buf = xfer->rx_buf;
-	bs->len = xfer->len;
+	bs->tx_buf = tfr->tx_buf;
+	bs->rx_buf = tfr->rx_buf;
+	bs->len = tfr->len;
 
-	cs = stp->cs | SPI_CS_INTR | SPI_CS_INTD | SPI_CS_TA;
-
-	bcm2708_wr(bs, SPI_CLK, stp->cdiv);
+	bcm2708_wr(bs, SPI_CLK, cdiv);
 	bcm2708_wr(bs, SPI_CS, cs);
 
-	ret = wait_for_completion_timeout(&bs->done,
-			msecs_to_jiffies(SPI_TIMEOUT_MS));
-	if (ret == 0) {
-		dev_err(&spi->dev, "transfer timed out\n");
-		return -ETIMEDOUT;
+	return 0;
+}
+
+static int bcm2708_spi_finish_transfer(struct spi_device *spi,
+		struct spi_transfer *tfr, bool cs_change)
+{
+	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
+	u32 cs = bcm2708_rd(bs, SPI_CS);
+
+	/* drain RX FIFO */
+	while (cs & SPI_CS_RXD) {
+		bcm2708_rd_fifo(bs, 1);
+		cs = bcm2708_rd(bs, SPI_CS);
 	}
 
 	if (xfer->delay_usecs)
 		udelay(xfer->delay_usecs);
 
-	if (list_is_last(&xfer->transfer_list, &msg->transfers) ||
-			xfer->cs_change) {
-		/* clear TA and interrupt flags */
-		bcm2708_wr(bs, SPI_CS, stp->cs);
-	}
-
-	msg->actual_length += (xfer->len - bs->len);
+	if (cs_change)
+		/* clear TA flag */
+		bcm2708_wr(bs, SPI_CS, cs & ~SPI_CS_TA);
 
 	return 0;
-}
-
-static void bcm2708_work(struct work_struct *work)
-{
-	struct bcm2708_spi *bs = container_of(work, struct bcm2708_spi, work);
-	unsigned long flags;
-	struct spi_message *msg;
-	struct spi_transfer *xfer;
-	int status = 0;
-
-	spin_lock_irqsave(&bs->lock, flags);
-	while (!list_empty(&bs->queue)) {
-		msg = list_first_entry(&bs->queue, struct spi_message, queue);
-		list_del_init(&msg->queue);
-		spin_unlock_irqrestore(&bs->lock, flags);
-
-		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
-			status = bcm2708_process_transfer(bs, msg, xfer);
-			if (status)
-				break;
-		}
-
-		msg->status = status;
-		msg->complete(msg->context);
-
-		spin_lock_irqsave(&bs->lock, flags);
-	}
-	spin_unlock_irqrestore(&bs->lock, flags);
 }
 
 static int bcm2708_spi_setup(struct spi_device *spi)
 {
-	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
-	struct bcm2708_spi_state *state;
 	int ret;
 
-	if (bs->stopping)
-		return -ESHUTDOWN;
+	if (!spi->bits_per_word)
+		spi->bits_per_word = 8;
 
-	if (!(spi->mode & SPI_NO_CS) &&
-			(spi->chip_select > spi->master->num_chipselect)) {
-		dev_dbg(&spi->dev,
-			"setup: invalid chipselect %u (%u defined)\n",
-			spi->chip_select, spi->master->num_chipselect);
+	if (spi->mode & ~SPI_MODE_BITS) {
+		dev_err(&spi->dev, "setup: unsupported mode bits %x\n",
+				spi->mode & ~SPI_MODE_BITS);
 		return -EINVAL;
 	}
 
-	state = spi->controller_state;
-	if (!state) {
-		state = kzalloc(sizeof(*state), GFP_KERNEL);
-		if (!state)
-			return -ENOMEM;
-
-		spi->controller_state = state;
+	ret = bcm2708_spi_check_transfer(spi, NULL);
+	if (ret) {
+		dev_err(&spi->dev, "setup: invalid message\n");
+		return ret;
 	}
-
-	ret = bcm2708_setup_state(spi->master, &spi->dev, state,
-		spi->max_speed_hz, spi->chip_select, spi->mode,
-		spi->bits_per_word);
-	if (ret < 0) {
-		kfree(state);
-		spi->controller_state = NULL;
-	}
-
-	dev_dbg(&spi->dev,
-		"setup: cd %d: %d Hz, bpw %u, mode 0x%x -> CS=%08x CDIV=%04x\n",
-		spi->chip_select, spi->max_speed_hz, spi->bits_per_word,
-		spi->mode, state->cs, state->cdiv);
 
 	return 0;
 }
 
-static int bcm2708_spi_transfer(struct spi_device *spi, struct spi_message *msg)
+static int bcm2708_spi_prepare_transfer(struct spi_master *master)
 {
-	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
-	struct spi_transfer *xfer;
-	int ret;
-	unsigned long flags;
+	return 0;
+}
 
-	if (unlikely(list_empty(&msg->transfers)))
-		return -EINVAL;
+static int bcm2708_spi_transfer_one(struct spi_master *master,
+		struct spi_message *mesg)
+{
+	struct bcm2708_spi *bs = spi_master_get_devdata(master);
+	struct spi_transfer *tfr;
+	struct spi_device *spi = mesg->spi;
+	int err = 0;
+	unsigned int timeout;
+	bool cs_change;
 
-	if (bs->stopping)
-		return -ESHUTDOWN;
+	list_for_each_entry(tfr, &mesg->transfers, transfer_list) {
+		if (!tfr->bits_per_word)
+			tfr->bits_per_word = spi->bits_per_word;
 
-	list_for_each_entry(xfer, &msg->transfers, transfer_list) {
-		if (!(xfer->tx_buf || xfer->rx_buf) && xfer->len) {
-			dev_dbg(&spi->dev, "missing rx or tx buf\n");
-			return -EINVAL;
+		err = bcm2708_spi_check_transfer(spi, tfr);
+		if (err)
+			goto out;
+
+		err = bcm2708_spi_start_transfer(spi, tfr);
+		if (err)
+			goto out;
+
+		timeout = wait_for_completion_timeout(&bs->done,
+				msecs_to_jiffies(SPI_TIMEOUT_MS));
+		if (!timeout) {
+			err = -ETIMEDOUT;
+			goto out;
 		}
 
-		if (!xfer->bits_per_word || xfer->speed_hz)
-			continue;
+		cs_change = tfr->cs_change ||
+			list_is_last(&tfr->transfer_list, &mesg->transfers);
 
-		ret = bcm2708_setup_state(spi->master, &spi->dev, NULL,
-			xfer->speed_hz ? xfer->speed_hz : spi->max_speed_hz,
-			spi->chip_select, spi->mode,
-			xfer->bits_per_word ? xfer->bits_per_word :
-				spi->bits_per_word);
-		if (ret)
-			return ret;
+		err = bcm2708_spi_finish_transfer(spi, tfr, cs_change);
+		if (err)
+			goto out;
+
+		mesg->actual_length += (tfr->len - bs->len);
 	}
 
-	msg->status = -EINPROGRESS;
-	msg->actual_length = 0;
-
-	spin_lock_irqsave(&bs->lock, flags);
-	list_add_tail(&msg->queue, &bs->queue);
-	queue_work(bs->workq, &bs->work);
-	spin_unlock_irqrestore(&bs->lock, flags);
+out:
+	mesg->status = err;
+	spi_finalize_current_message(master);
 
 	return 0;
 }
 
-static void bcm2708_spi_cleanup(struct spi_device *spi)
+static int bcm2708_spi_unprepare_transfer(struct spi_master *master)
 {
-	if (spi->controller_state) {
-		kfree(spi->controller_state);
-		spi->controller_state = NULL;
-	}
+	return 0;
 }
 
 static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
@@ -460,22 +370,19 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 	}
 
 	/* the spi->mode bits understood by this driver: */
-	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_NO_CS;
+	master->mode_bits = SPI_MODE_BITS;
 
 	master->bus_num = -1;
 	master->num_chipselect = 3;
 	master->setup = bcm2708_spi_setup;
-	master->transfer = bcm2708_spi_transfer;
-	master->cleanup = bcm2708_spi_cleanup;
+	master->prepare_transfer_hardware = bcm2708_spi_prepare_transfer;
+	master->transfer_one_message = bcm2708_spi_transfer_one;
+	master->unprepare_transfer_hardware = bcm2708_spi_unprepare_transfer;
+
 	master->dev.of_node = pdev->dev.of_node;
 	platform_set_drvdata(pdev, master);
 
 	bs = spi_master_get_devdata(master);
-
-	spin_lock_init(&bs->lock);
-	INIT_LIST_HEAD(&bs->queue);
-	init_completion(&bs->done);
-	INIT_WORK(&bs->work, bcm2708_work);
 
 	if (!request_region(iomem.start, resource_size(&iomem),
 				pdev->dev.of_node->full_name)) {
@@ -490,28 +397,22 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		goto out_release_region;
 	}
 
-	bs->workq = create_singlethread_workqueue(dev_name(&pdev->dev));
-	if (!bs->workq) {
-		dev_err(&pdev->dev, "could not create workqueue\n");
-		goto out_iounmap;
-	}
-
+	init_completion(&bs->done);
 	bs->iomem = iomem;
 	bs->irq = irq;
 	bs->clk = clk;
 	bs->pctl = pctl;
-	bs->stopping = false;
 
 	err = request_irq(irq, bcm2708_spi_interrupt, 0, dev_name(&pdev->dev),
 			master);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
-		goto out_workqueue;
+		goto out_iounmap;
 	}
 
 	/* initialise the hardware */
 	clk_prepare(clk);
-	bcm2708_wr(bs, SPI_CS, SPI_CS_REN | SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
+	bcm2708_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
 
 	err = spi_register_master(master);
 	if (err) {
@@ -525,9 +426,8 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 	return 0;
 
 out_free_irq:
+	clk_unprepare(bs->clk);
 	free_irq(bs->irq, master);
-out_workqueue:
-	destroy_workqueue(bs->workq);
 out_iounmap:
 	iounmap(bs->base);
 out_release_region:
@@ -546,13 +446,10 @@ static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
 	struct spi_master *master = platform_get_drvdata(pdev);
 	struct bcm2708_spi *bs = spi_master_get_devdata(master);
 
-	/* reset the hardware and block queue progress */
-	spin_lock_irq(&bs->lock);
-	bs->stopping = true;
-	bcm2708_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
-	spin_unlock_irq(&bs->lock);
+	spi_unregister_master(master);
 
-	flush_work_sync(&bs->work);
+	/* reset the hardware and block queue progress */
+	bcm2708_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
 
 	pinctrl_put(bs->pctl);
 	clk_unprepare(bs->clk);
@@ -561,7 +458,7 @@ static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
 	iounmap(bs->base);
 	release_region(bs->iomem.start, resource_size(&bs->iomem));
 
-	spi_unregister_master(master);
+	spi_master_put(master);
 
 	return 0;
 }
