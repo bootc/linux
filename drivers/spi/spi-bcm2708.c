@@ -240,8 +240,8 @@ static int bcm2708_spi_finish_transfer(struct spi_device *spi,
 		cs = bcm2708_rd(bs, SPI_CS);
 	}
 
-	if (xfer->delay_usecs)
-		udelay(xfer->delay_usecs);
+	if (tfr->delay_usecs)
+		udelay(tfr->delay_usecs);
 
 	if (cs_change)
 		/* clear TA flag */
