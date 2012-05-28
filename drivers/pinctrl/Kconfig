@@ -87,7 +87,8 @@ config PINCTRL_COH901
 config PINCTRL_BCM2708
 	bool "Broadcom BCM2708 GPIO pin controller driver"
 	depends on MACH_BCM2708 && OF
-	default y if MACH_BCM2708
+	select PINMUX
+	select PINCONF
 
 endmenu
 
