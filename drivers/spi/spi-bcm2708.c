@@ -79,11 +79,8 @@
 #define DRV_NAME	"bcm2708_spi"
 
 struct bcm2708_spi {
-	struct resource iomem;
 	void __iomem *base;
-	int irq;
 	struct clk *clk;
-	struct pinctrl *pctl;
 
 	struct completion done;
 
@@ -349,24 +346,22 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		return irq;
 	}
 
-	clk = clk_get(&pdev->dev, "sys_pclk");
+	clk = devm_clk_get(&pdev->dev, "sys_pclk");
 	if (IS_ERR(clk)) {
 		dev_err(&pdev->dev, "could not find clk: %ld\n", PTR_ERR(clk));
 		return PTR_ERR(clk);
 	}
 
-	pctl = pinctrl_get_select_default(&pdev->dev);
+	pctl = devm_pinctrl_get_select_default(&pdev->dev);
 	if (IS_ERR(pctl)) {
-		err = PTR_ERR(pctl);
-		dev_err(&pdev->dev, "could not set up pinctrl: %d\n", err);
-		goto out_clk_put;
+		dev_err(&pdev->dev, "could not set up pinctrl: %d\n", PTR_ERR(pctl));
+		return PTR_ERR(pctl);
 	}
 
 	master = spi_alloc_master(&pdev->dev, sizeof(*bs));
 	if (!master) {
 		dev_err(&pdev->dev, "spi_alloc_master() failed\n");
-		err = -ENOMEM;
-		goto out_pinctrl_put;
+		return -ENOMEM;
 	}
 
 	/* the spi->mode bits understood by this driver: */
@@ -387,30 +382,27 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	bs = spi_master_get_devdata(master);
 
-	if (!request_region(iomem.start, resource_size(&iomem),
+	if (!devm_request_region(&pdev->dev, iomem.start, resource_size(&iomem),
 				pdev->dev.of_node->full_name)) {
 		dev_err(&pdev->dev, "could not request memory region\n");
 		err = -ENOMEM;
 		goto out_master_put;
 	}
 
-	bs->base = ioremap(iomem.start, resource_size(&iomem));
+	bs->base = devm_ioremap(&pdev->dev, iomem.start, resource_size(&iomem));
 	if (!bs->base) {
 		dev_err(&pdev->dev, "could not remap memory\n");
-		goto out_release_region;
+		goto out_master_put;
 	}
 
 	init_completion(&bs->done);
-	bs->iomem = iomem;
-	bs->irq = irq;
 	bs->clk = clk;
-	bs->pctl = pctl;
 
-	err = request_irq(irq, bcm2708_spi_interrupt, 0, dev_name(&pdev->dev),
-			master);
+	err = devm_request_irq(&pdev->dev, irq, bcm2708_spi_interrupt, 0,
+			dev_name(&pdev->dev), master);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
-		goto out_iounmap;
+		goto out_master_put;
 	}
 
 	/* initialise the hardware */
@@ -420,7 +412,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 	err = spi_register_master(master);
 	if (err) {
 		dev_err(&pdev->dev, "could not register SPI master: %d\n", err);
-		goto out_free_irq;
+		goto out_clk_unprepare;
 	}
 
 	dev_info(&pdev->dev, "SPI Controller at 0x%08lx (irq %d)%s\n",
@@ -428,19 +420,10 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	return 0;
 
-out_free_irq:
+out_clk_unprepare:
 	clk_unprepare(bs->clk);
-	free_irq(bs->irq, master);
-out_iounmap:
-	iounmap(bs->base);
-out_release_region:
-	release_region(iomem.start, resource_size(&iomem));
 out_master_put:
 	spi_master_put(master);
-out_pinctrl_put:
-	pinctrl_put(pctl);
-out_clk_put:
-	clk_put(clk);
 	return err;
 }
 
@@ -454,13 +437,7 @@ static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
 	/* reset the hardware and block queue progress */
 	bcm2708_wr(bs, SPI_CS, SPI_CS_CLEAR_RX | SPI_CS_CLEAR_TX);
 
-	pinctrl_put(bs->pctl);
 	clk_unprepare(bs->clk);
-	clk_put(bs->clk);
-	free_irq(bs->irq, master);
-	iounmap(bs->base);
-	release_region(bs->iomem.start, resource_size(&bs->iomem));
-
 	spi_master_put(master);
 
 	return 0;
