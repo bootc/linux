@@ -354,7 +354,8 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	pctl = devm_pinctrl_get_select_default(&pdev->dev);
 	if (IS_ERR(pctl)) {
-		dev_err(&pdev->dev, "could not set up pinctrl: %d\n", PTR_ERR(pctl));
+		dev_err(&pdev->dev, "could not set up pinctrl: %ld\n",
+				PTR_ERR(pctl));
 		return PTR_ERR(pctl);
 	}
 
