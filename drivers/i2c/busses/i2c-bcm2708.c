@@ -80,11 +80,8 @@ struct bcm2708_i2c {
 	struct i2c_adapter adapter;
 
 	spinlock_t lock;
-	struct resource iomem;
 	void __iomem *base;
-	int irq;
 	struct clk *clk;
-	struct pinctrl *pctl;
 
 	struct completion done;
 
@@ -248,22 +245,22 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 		return irq;
 	}
 
-	clk = clk_get(&pdev->dev, "sys_pclk");
+	clk = devm_clk_get(&pdev->dev, "sys_pclk");
 	if (IS_ERR(clk)) {
 		dev_err(&pdev->dev, "could not find clk: %ld\n", PTR_ERR(clk));
 		return PTR_ERR(clk);
 	}
 
-	pctl = pinctrl_get_select_default(&pdev->dev);
+	pctl = devm_pinctrl_get_select_default(&pdev->dev);
 	if (IS_ERR(pctl)) {
-		err = PTR_ERR(pctl);
-		dev_err(&pdev->dev, "could not set up pinctrl: %d\n", err);
-		goto out_clk_put;
+		dev_err(&pdev->dev, "could not set up pinctrl: %ld\n",
+				PTR_ERR(pctl));
+		return PTR_ERR(pctl);
 	}
 
-	bi = kzalloc(sizeof(*bi), GFP_KERNEL);
+	bi = devm_kzalloc(&pdev->dev, sizeof(*bi), GFP_KERNEL);
 	if (!bi)
-		goto out_pinctrl_put;
+		return -ENOMEM;
 
 	platform_set_drvdata(pdev, bi);
 
@@ -277,33 +274,29 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	spin_lock_init(&bi->lock);
 	init_completion(&bi->done);
 
-	if (!request_region(iomem.start, resource_size(&iomem),
+	if (!devm_request_region(&pdev->dev, iomem.start, resource_size(&iomem),
 				pdev->dev.of_node->full_name)) {
 		dev_err(&pdev->dev, "could not request memory region\n");
-		err = -ENOMEM;
-		goto out_free_bi;
+		return -ENOMEM;
 	}
 
-	bi->base = ioremap(iomem.start, resource_size(&iomem));
+	bi->base = devm_ioremap(&pdev->dev, iomem.start, resource_size(&iomem));
 	if (!bi->base) {
 		dev_err(&pdev->dev, "could not remap memory\n");
-		goto out_release_region;
+		return -ENOMEM;
 	}
 
-	bi->iomem = iomem;
-	bi->irq = irq;
 	bi->clk = clk;
-	bi->pctl = pctl;
 
-	err = request_irq(irq, bcm2708_i2c_interrupt, IRQF_SHARED,
-			dev_name(&pdev->dev), bi);
+	err = devm_request_irq(&pdev->dev, irq, bcm2708_i2c_interrupt,
+			IRQF_SHARED, dev_name(&pdev->dev), bi);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
-		goto out_iounmap;
+		return err;
 	}
 
 	clk_prepare(clk);
-	clk_hz = clk_get_rate(bi->clk);
+	clk_hz = clk_get_rate(clk);
 
 	err = of_property_read_u32(pdev->dev.of_node, "clock-frequency",
 			&bus_hz);
@@ -320,7 +313,7 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	err = i2c_add_adapter(adap);
 	if (err < 0) {
 		dev_err(&pdev->dev, "could not add I2C adapter: %d\n", err);
-		goto out_free_irq;
+		goto out_clk_unprepare;
 	}
 
 	of_i2c_register_devices(adap);
@@ -330,18 +323,8 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 
 	return 0;
 
-out_free_irq:
-	free_irq(bi->irq, bi);
-out_iounmap:
-	iounmap(bi->base);
-out_release_region:
-	release_region(iomem.start, resource_size(&iomem));
-out_free_bi:
-	kfree(bi);
-out_pinctrl_put:
-	pinctrl_put(pctl);
-out_clk_put:
-	clk_put(clk);
+out_clk_unprepare:
+	clk_unprepare(clk);
 	return err;
 }
 
@@ -352,13 +335,7 @@ static int __devexit bcm2708_i2c_remove(struct platform_device *pdev)
 	platform_set_drvdata(pdev, NULL);
 
 	i2c_del_adapter(&bi->adapter);
-	free_irq(bi->irq, bi);
-	iounmap(bi->base);
-	release_region(bi->iomem.start, resource_size(&bi->iomem));
-	pinctrl_put(bi->pctl);
 	clk_unprepare(bi->clk);
-	clk_put(bi->clk);
-	kfree(bi);
 
 	return 0;
 }
