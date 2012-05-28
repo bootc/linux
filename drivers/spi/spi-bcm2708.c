@@ -382,6 +382,9 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 	master->dev.of_node = pdev->dev.of_node;
 	platform_set_drvdata(pdev, master);
 
+	master->rt = of_property_read_bool(pdev->dev.of_node,
+			"linux,realtime");
+
 	bs = spi_master_get_devdata(master);
 
 	if (!request_region(iomem.start, resource_size(&iomem),
@@ -420,8 +423,8 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		goto out_free_irq;
 	}
 
-	dev_info(&pdev->dev, "SPI Controller at 0x%08lx (irq %d)\n",
-		(unsigned long)iomem.start, irq);
+	dev_info(&pdev->dev, "SPI Controller at 0x%08lx (irq %d)%s\n",
+		(unsigned long)iomem.start, irq, master->rt ? " REALTIME" : "");
 
 	return 0;
 
