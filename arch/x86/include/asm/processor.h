@@ -579,9 +579,6 @@ extern int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
 /* Free all resources held by a thread. */
 extern void release_thread(struct task_struct *);
 
-/* Prepare to copy thread state - unlazy all lazy state */
-extern void prepare_to_copy(struct task_struct *tsk);
-
 unsigned long get_wchan(struct task_struct *p);
 
 /*
@@ -973,8 +970,6 @@ extern bool cpu_has_amd_erratum(const int *);
 #else
 #define cpu_has_amd_erratum(x)	(false)
 #endif /* CONFIG_CPU_SUP_AMD */
-
-void cpu_idle_wait(void);
 
 extern unsigned long arch_align_stack(unsigned long sp);
 extern void free_init_pages(char *what, unsigned long begin, unsigned long end);

@@ -67,17 +67,8 @@ const unsigned long syscall_restart_code[2] = {
 asmlinkage int sys_sigsuspend(int restart, unsigned long oldmask, old_sigset_t mask)
 {
 	sigset_t blocked;
-
-	current->saved_sigmask = current->blocked;
-
-	mask &= _BLOCKABLE;
 	siginitset(&blocked, mask);
-	set_current_blocked(&blocked);
-
-	current->state = TASK_INTERRUPTIBLE;
-	schedule();
-	set_restore_sigmask();
-	return -ERESTARTNOHAND;
+	return sigsuspend(&blocked);
 }
 
 asmlinkage int 
@@ -588,6 +579,8 @@ handle_signal(unsigned long sig, struct k_sigaction *ka,
 	 * Block the signal if we were successful.
 	 */
 	block_sigmask(ka, sig);
+
+	tracehook_signal_handler(sig, info, ka, regs, 0);
 
 	return 0;
 }
