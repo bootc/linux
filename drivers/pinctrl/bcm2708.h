@@ -168,16 +168,14 @@ extern struct bcm2708_pinctrl __devinit *bcm2708_pinctrl_of_init(
 extern void bcm2708_pinctrl_of_free(struct bcm2708_pinctrl *pc);
 
 /* pctrl */
-extern int bcm2708_pinctrl_list_groups(struct pinctrl_dev *pctl,
-	unsigned selector);
+extern int bcm2708_pinctrl_get_groups_count(struct pinctrl_dev *pctl);
 extern const char *bcm2708_pinctrl_get_group_name(struct pinctrl_dev *pctl,
 	unsigned selector);
 extern int bcm2708_pinctrl_get_group_pins(struct pinctrl_dev *pctl,
 	unsigned selector, const unsigned **pins, unsigned *num_pins);
 extern int bcm2708_pinmux_request(struct pinctrl_dev *pctl, unsigned offset);
 extern int bcm2708_pinmux_free(struct pinctrl_dev *pctl, unsigned offset);
-extern int bcm2708_pinmux_list_functions(struct pinctrl_dev *pctl,
-	unsigned selector);
+extern int bcm2708_pinmux_get_functions_count(struct pinctrl_dev *pctl);
 extern const char *bcm2708_pinmux_get_function_name(struct pinctrl_dev *pctl,
 	unsigned selector);
 extern int bcm2708_pinmux_get_function_groups(struct pinctrl_dev *pctl,

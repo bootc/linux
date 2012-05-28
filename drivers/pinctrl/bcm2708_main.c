@@ -42,13 +42,13 @@ static int __devinit bcm2708_pinctrl_register(struct bcm2708_pinctrl *pc)
 	/* desc->confops = &pc->confops; */
 	desc->owner = THIS_MODULE;
 
-	pc->pctlops.list_groups = bcm2708_pinctrl_list_groups;
+	pc->pctlops.get_groups_count = bcm2708_pinctrl_get_groups_count;
 	pc->pctlops.get_group_name = bcm2708_pinctrl_get_group_name;
 	pc->pctlops.get_group_pins = bcm2708_pinctrl_get_group_pins;
 
 	pc->pmxops.request = bcm2708_pinmux_request;
 	pc->pmxops.free = bcm2708_pinmux_free;
-	pc->pmxops.list_functions = bcm2708_pinmux_list_functions;
+	pc->pmxops.get_functions_count = bcm2708_pinmux_get_functions_count;
 	pc->pmxops.get_function_name = bcm2708_pinmux_get_function_name;
 	pc->pmxops.get_function_groups = bcm2708_pinmux_get_function_groups;
 	pc->pmxops.enable = bcm2708_pinmux_enable;

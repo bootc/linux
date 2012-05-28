@@ -23,10 +23,10 @@
 
 #include "bcm2708.h"
 
-int bcm2708_pinctrl_list_groups(struct pinctrl_dev *pctl, unsigned selector)
+int bcm2708_pinctrl_get_groups_count(struct pinctrl_dev *pctl)
 {
 	struct bcm2708_pinctrl *pc = pinctrl_dev_get_drvdata(pctl);
-	return selector < pc->nr_groups ? 0 : -EINVAL;
+	return pc->nr_groups;
 }
 
 const char *bcm2708_pinctrl_get_group_name(struct pinctrl_dev *pctl,
@@ -90,8 +90,7 @@ int bcm2708_pinmux_free(struct pinctrl_dev *pctl, unsigned offset)
 	return 0;
 }
 
-int bcm2708_pinmux_list_functions(struct pinctrl_dev *pctl,
-	unsigned selector)
+int bcm2708_pinmux_get_functions_count(struct pinctrl_dev *pctl)
 {
 	/* There is only one function because pinmux has no way of specifying
 	 * that a device or group requires each pin with a specific function
@@ -99,7 +98,7 @@ int bcm2708_pinmux_list_functions(struct pinctrl_dev *pctl,
 	 * selections. This is ok because we map each device to a group and so
 	 * we know which function selection to use.
 	 */
-	return selector == 0 ? 0 : -EINVAL;
+	return 1;
 }
 
 const char *bcm2708_pinmux_get_function_name(struct pinctrl_dev *pctl,
