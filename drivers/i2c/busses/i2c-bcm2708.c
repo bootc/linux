@@ -308,7 +308,7 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	}
 
 	bcm2708_bsc_reset(bi);
-	bcm2708_wr(bi, BSC_DIV, clk_hz / bus_hz);
+	bcm2708_wr(bi, BSC_DIV, DIV_ROUND_UP(clk_hz, bus_hz));
 
 	err = i2c_add_adapter(adap);
 	if (err < 0) {
