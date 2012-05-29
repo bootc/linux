@@ -416,8 +416,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		goto out_clk_unprepare;
 	}
 
-	dev_info(&pdev->dev, "SPI Controller at 0x%08lx (irq %d)%s\n",
-		(unsigned long)iomem.start, irq, master->rt ? " REALTIME" : "");
+	dev_info(&pdev->dev, "SPI controller (irq %d)%s\n", irq);
 
 	return 0;
 
