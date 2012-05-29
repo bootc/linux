@@ -1,0 +1,28 @@
+* Broadcom BCM2708 SPI driver
+
+This is used on the Raspberry Pi with the Broadcom BCM2835 SoC.
+
+Required properties:
+- compatible : Should be "broadcom,bcm2708-spi"
+- reg : Should contain SPI register base and length
+- interrupt-parent : Should point to an interrupt controller
+- interrupts : Should contain the BSC interrupt number
+- #address-cells : Must be 1
+- #size-cells : Must be 0
+
+Optional properties:
+- linux,realtime : Boolean property that makes the SPI message pump run with
+  realtime priority
+- Child nodes conforming to spi bus binding
+
+Examples:
+
+spi {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	compatible = "broadcom,bcm2708-spi";
+	reg = <0x20204000 0x18>;
+	interrupt-parent = <&vic2>;
+	interrupts = <22>;
+};
+
