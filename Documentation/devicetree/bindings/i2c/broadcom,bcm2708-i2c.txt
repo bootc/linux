@@ -1,0 +1,29 @@
+* Broadcom BCM2708 BSC driver
+
+This is used on the Raspberry Pi with the Broadcom BCM2835 SoC. Broadcom Serial
+Controller is a Broadcom proprietary bus compatible with I2C.
+
+Required properties:
+- compatible : Should be "broadcom,bcm2708-i2c"
+- reg : Should contain BSC register base and length
+- interrupt-parent : Should point to an interrupt controller
+- interrupts : Should contain the BSC interrupt number
+- #address-cells : Must be 1
+- #size-cells : Must be 0
+
+Optional properties:
+- clock-frequency : Constains desired I2C/BSC bus clock frequency in Hz.
+  The absence of the propoerty indicates the default frequency 100 kHz.
+- Child nodes conforming to i2c bus binding
+
+Examples:
+
+bsc0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	compatible = "broadcom,bcm2708-i2c";
+	reg = <0x20205000 0x18>;
+	interrupt-parent = <&vic2>;
+	interrupts = <21>;
+};
+
