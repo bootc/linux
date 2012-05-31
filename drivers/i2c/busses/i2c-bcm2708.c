@@ -107,6 +107,18 @@ static inline void bcm2708_bsc_reset(struct bcm2708_i2c *bi)
 	bcm2708_wr(bi, BSC_S, BSC_S_CLKT | BSC_S_ERR | BSC_S_DONE);	
 }
 
+static inline void bcm2708_bsc_fifo_drain(struct bcm2708_i2c *bi)
+{
+	while ((bcm2708_rd(bi, BSC_S) & BSC_S_RXD) && (bi->pos < bi->msg->len))
+		bi->msg->buf[bi->pos++] = bcm2708_rd(bi, BSC_FIFO);
+}
+
+static inline void bcm2708_bsc_fifo_fill(struct bcm2708_i2c *bi)
+{
+	while ((bcm2708_rd(bi, BSC_S) & BSC_S_TXD) && (bi->pos < bi->msg->len))
+		bcm2708_wr(bi, BSC_FIFO, bi->msg->buf[bi->pos++]);
+}
+
 static inline void bcm2708_bsc_setup(struct bcm2708_i2c *bi)
 {
 	u32 c = BSC_C_I2CEN | BSC_C_INTD | BSC_C_ST | BSC_C_CLEAR_1;
@@ -126,7 +138,6 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 	struct bcm2708_i2c *bi = dev_id;
 	bool handled = false;
 	u32 s;
-	struct i2c_msg *msg = bi->msg;
 
 	spin_lock(&bi->lock);
 
@@ -142,11 +153,8 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 	} else if (s & BSC_S_DONE) {
 		bi->nmsgs--;
 
-		/* drain the RX FIFO */
-		while (s & BSC_S_RXD) {
-			msg->buf[bi->pos++] = bcm2708_rd(bi, BSC_FIFO);
-			s = bcm2708_rd(bi, BSC_S);
-		};
+		if (bi->msg->flags & I2C_M_RD)
+			bcm2708_bsc_fifo_drain(bi);
 
 		bcm2708_bsc_reset(bi);
 
@@ -160,17 +168,9 @@ static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 			complete(&bi->done);
 		}
 	} else if (s & BSC_S_TXW) {
-		/* fill the TX FIFO */
-		do {
-			bcm2708_wr(bi, BSC_FIFO, msg->buf[bi->pos++]);
-			s = bcm2708_rd(bi, BSC_S);
-		} while (s & BSC_S_TXD);
+		bcm2708_bsc_fifo_fill(bi);
 	} else if (s & BSC_S_RXR) {
-		/* drain the RX FIFO */
-		do {
-			msg->buf[bi->pos++] = bcm2708_rd(bi, BSC_FIFO);
-			s = bcm2708_rd(bi, BSC_S);
-		} while (s & BSC_S_RXD);
+		bcm2708_bsc_fifo_drain(bi);
 	} else {
 		handled = false;
 	}
