@@ -164,12 +164,11 @@ static inline void bcm2708_bsc_setup(struct bcm2708_i2c *bi)
 static irqreturn_t bcm2708_i2c_interrupt(int irq, void *dev_id)
 {
 	struct bcm2708_i2c *bi = dev_id;
-	bool handled = false;
+	bool handled = true;
 	u32 s;
 
 	spin_lock(&bi->lock);
 
-	handled = true;
 	s = bcm2708_rd(bi, BSC_S);
 
 	if (s & (BSC_S_CLKT | BSC_S_ERR)) {
