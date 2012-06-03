@@ -416,7 +416,7 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 		goto out_clk_unprepare;
 	}
 
-	dev_info(&pdev->dev, "SPI controller (irq %d)%s\n", irq);
+	dev_info(&pdev->dev, "SPI controller (irq %d)\n", irq);
 
 	return 0;
 
