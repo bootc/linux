@@ -48,6 +48,10 @@
 			clock-frequency = <100000>;
 		};
 
+		uart1 {
+			status = "disable";
+		};
+
 		bsc1 {
 			pinctrl-names = "default";
 			pinctrl-0 = <&pins_bsc1_a>;

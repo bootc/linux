@@ -580,14 +580,11 @@
 			interrupts = <2 21>;
 		};
 
-		/* Auxiliary device disabled by default */
-		/*
 		uart1 {
 			compatible = "broadcom,bcm2835-miniuart", "broadcom,bcm2708-miniuart", "ns16550";
 			reg = <0x215040 0x38>;
 			interrupts = <1 29>;
 		};
-		*/
 
 		bsc1 {
 			compatible = "broadcom,bcm2835-i2c", "broadcom,bcm2708-i2c";
