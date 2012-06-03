@@ -45,6 +45,15 @@
  * interrupt handler only acts on the top level interrupt controller,
  * routing shortcut interrupts directly and reading interrupts from the
  * other banks only when required.
+ *
+ *
+ * The FIQ control register:
+ *  Bits 0-6: IRQ (index in order of interrupts from banks 1, 2, then 0)
+ *  Bit    7: Enable FIQ generation
+ *  Bits  8+: Unused
+ *
+ * An interrupt must be disabled before configuring it for FIQ generation
+ * otherwise both handlers will fire at the same time!
  */
 
 #include <linux/io.h>
@@ -59,46 +68,54 @@
 #define IS_VALID_BANK(x) ((x > 0) && (x < 32))
 #define IS_VALID_IRQ(x) (x < 32)
 
+/* Pack the bank and irq (32 bits) into the hwirq */
+#define MAKE_HWIRQ(b, n)	((b << 5) | (n))
+#define HWIRQ_BANK(i)		(i >> 5)
+#define HWIRQ_BIT(i)		BIT(i & 0x1f)
+
+#define BANK0_HWIRQ_MASK	0xff
+/* Shortcuts can't be disabled so any unknown new ones need to be masked */
+#define SHORTCUT1_MASK		0x00007c00
+#define SHORTCUT2_MASK		0x001f8000
+#define SHORTCUT_SHIFT		10
+#define BANK1_HWIRQ		BIT(8)
+#define BANK2_HWIRQ		BIT(9)
+#define BANK0_VALID_MASK	(BANK0_HWIRQ_MASK | BANK1_HWIRQ | BANK2_HWIRQ \
+					| SHORTCUT1_MASK | SHORTCUT2_MASK)
+
+#define REG_FIQ_CONTROL		0x0c
+
+#define NR_BANKS		3
+#define IRQS_PER_BANK		32
+
+static int reg_pending[] __initconst = { 0x00, 0x04, 0x08 };
+static int reg_enable[] __initconst = { 0x18, 0x10, 0x14 };
+static int reg_disable[] __initconst = { 0x24, 0x1c, 0x20 };
+static int bank_irqs[] __initconst = { 8, 32, 32 };
+
+static const int shortcuts[] = {
+	7, 9, 10, 18, 19,		/* Bank 1 */
+	21, 22, 23, 24, 25, 30		/* Bank 2 */
+};
+
 struct armctrl_ic {
-	void __iomem *pending;
-	void __iomem *enable;
-	void __iomem *disable;
+	void __iomem *base;
+	void __iomem *pending[NR_BANKS];
+	void __iomem *enable[NR_BANKS];
+	void __iomem *disable[NR_BANKS];
 	struct irq_domain *domain;
-	struct irq_chip chip;
-
-	u32 valid_mask;
-	u32 source_mask;
-	u32 shortcut_mask;
-	u32 bank_mask;
-
-	struct armctrl_ic_shortcut {
-		u32 bank;
-		u32 irq;
-		struct irq_domain *domain;
-	} shortcuts[32];
-	struct armctrl_ic *banks[32];
 };
 
-struct of_armctrl_ic {
-	unsigned long base;
-	u32 base_irq;
-	u32 bank_id;
-
-	struct armctrl_ic *ic;
-};
-
-static struct armctrl_ic *intc __read_mostly = NULL;
+static struct armctrl_ic intc __read_mostly;
 
 static void armctrl_mask_irq(struct irq_data *d)
 {
-	struct armctrl_ic *data = irq_get_chip_data(d->irq);
-	writel_relaxed(BIT(d->hwirq), data->disable);
+	writel_relaxed(HWIRQ_BIT(d->hwirq), intc.disable[HWIRQ_BANK(d->hwirq)]);
 }
 
 static void armctrl_unmask_irq(struct irq_data *d)
 {
-	struct armctrl_ic *data = irq_get_chip_data(d->irq);
-	writel_relaxed(BIT(d->hwirq), data->enable);
+	writel_relaxed(HWIRQ_BIT(d->hwirq), intc.enable[HWIRQ_BANK(d->hwirq)]);
 }
 
 static struct irq_chip armctrl_chip = {
@@ -109,183 +126,68 @@ static struct irq_chip armctrl_chip = {
 	.irq_unmask = armctrl_unmask_irq
 };
 
-void of_read_armctrl_shortcuts(struct device_node *node, int count)
+static int armctrl_xlate(struct irq_domain *d, struct device_node *ctrlr,
+	const u32 *intspec, unsigned int intsize,
+	unsigned long *out_hwirq, unsigned int *out_type)
 {
-	struct of_armctrl_ic *data = node->data;
-	u32 smap[count * 2];
-	int ret, i, j;
+	if (WARN_ON(intsize != 2))
+		return -EINVAL;
 
-	/* The shortcut map (smap) is multiple pairs of u32 {bank_id, irq}
-	 * in order of the shortcut_mask from the LSB to the MSB.
-	 *
-	 * This means that the bit used for the shortcut itself is implicit
-	 * based on where it is in the list.
-	 */
-	ret = of_property_read_u32_array(node, "shortcut-map", smap, count * 2);
-	if (ret != 0)
-		panic("%s: invalid shortcut map (%d)\n", node->full_name, ret);
+	if (WARN_ON(intspec[0] >= NR_BANKS))
+		return -EINVAL;
 
-	for (i = 0, j = 0; i < 32; i++) {
-		if (!(data->ic->shortcut_mask & BIT(i)))
-			continue;
+	if (WARN_ON(intspec[1] >= IRQS_PER_BANK))
+		return -EINVAL;
 
-		if (!IS_VALID_BANK(smap[j]) || !IS_VALID_IRQ(smap[j + 1]))
-			panic("%s: invalid vic shortcut %u: %u->%u\n",
-				node->full_name, i, smap[j], smap[j + 1]);
-
-		data->ic->shortcuts[i].bank = smap[j];
-		data->ic->shortcuts[i].irq = smap[j + 1];
-		j += 2;
-	}
+	*out_hwirq = MAKE_HWIRQ(intspec[0], intspec[1]);
+	*out_type = IRQ_TYPE_NONE;
+	return 0;
 }
 
-struct of_armctrl_ic __init *of_read_armctrl_ic(struct device_node *node)
-{
-	struct of_armctrl_ic *data = kmalloc(sizeof(*data), GFP_ATOMIC);
-	struct resource res[3];
-	int nr_shortcuts, i;
-	int ret;
-
-	if (data == NULL)
-		panic("%s: out of memory\n", node->full_name);
-	/* this is freed in of_node_release */
-	node->data = data;
-
-	data->ic = kzalloc(sizeof(*data->ic), GFP_ATOMIC);
-	if (data->ic == NULL)
-		panic("%s: out of memory\n", node->full_name);
-
-	ret = of_address_to_resource(node, 0, &res[0]);
-	ret |= of_address_to_resource(node, 1, &res[1]);
-	ret |= of_address_to_resource(node, 2, &res[2]);
-
-	if (ret)
-		panic("%s: unable to find all vic cpu registers\n",
-			node->full_name);
-
-	data->base = (unsigned long)res[0].start;
-	data->ic->pending = ioremap(res[0].start, resource_size(&res[0]));
-	data->ic->enable = ioremap(res[1].start, resource_size(&res[1]));
-	data->ic->disable = ioremap(res[2].start, resource_size(&res[2]));
-
-	if (!data->ic->pending || !data->ic->enable || !data->ic->disable)
-		panic("%s: unable to map all vic cpu registers\n",
-			node->full_name);
-
-	if (!request_region(res[0].start,
-				resource_size(&res[0]), node->full_name)
-			|| !request_region(res[1].start,
-				resource_size(&res[1]), node->full_name)
-			|| !request_region(res[2].start,
-				resource_size(&res[2]), node->full_name))
-		panic("%s: unable to request resources for all vic cpu registers\n",
-			node->full_name);
-
-	of_property_read_u32(node, "interrupt-base", &data->base_irq);
-	of_property_read_u32(node, "bank-interrupt", &data->bank_id);
-
-	if (of_property_read_u32(node, "source-mask", &data->ic->source_mask))
-		data->ic->source_mask = ~0;
-	of_property_read_u32(node, "bank-mask", &data->ic->bank_mask);
-	of_property_read_u32(node, "shortcut-mask", &data->ic->shortcut_mask);
-	data->ic->valid_mask = data->ic->source_mask;
-
-	if ((data->ic->source_mask & data->ic->bank_mask)
-			|| (data->ic->source_mask & data->ic->shortcut_mask)
-			|| (data->ic->bank_mask & data->ic->shortcut_mask)) {
-		panic("%s: vic mask overlap %08x,%08x,%08x\n", node->full_name,
-			data->ic->source_mask, data->ic->shortcut_mask,
-			data->ic->bank_mask);
-	}
-
-	nr_shortcuts = 0;
-	for (i = 0; i < 32; i++) {
-		if (data->ic->shortcut_mask & BIT(i))
-			nr_shortcuts++;
-	}
-
-	if (nr_shortcuts > 0) {
-		of_read_armctrl_shortcuts(node, nr_shortcuts);
-	}
-
-	return data;
-}
-
-void __init armctrl_of_link(const char *name, struct of_armctrl_ic *c,
-	struct of_armctrl_ic *p)
-{
-	BUG_ON(c == NULL);
-	BUG_ON(p == NULL);
-
-	if (!c->bank_id)
-		panic("%s: missing bank id for child vic\n", name);
-
-	if (c->bank_id > 32 || !(p->ic->bank_mask & BIT(c->bank_id)))
-		panic("%s: invalid vic bank %d\n", name, c->bank_id);
-
-	if (p->ic->banks[c->bank_id])
-		panic("%s: duplicate vic bank %d\n", name, c->bank_id);
-
-	p->ic->banks[c->bank_id] = c->ic;
-	p->ic->valid_mask |= BIT(c->bank_id);
-}
-
-void __init armctrl_of_link_shortcuts(struct of_armctrl_ic *c,
-	struct of_armctrl_ic *p)
-{
-	int i;
-
-	for (i = 0; i < 32; i++) {
-		if (p->ic->shortcuts[i].bank == c->bank_id) {
-			p->ic->valid_mask |= BIT(i);
-			p->ic->shortcuts[i].domain = c->ic->domain;
-		}
-	}
-}
+static struct irq_domain_ops armctrl_ops = {
+	.map = irq_domain_simple_map,
+	.xlate = armctrl_xlate
+};
 
 int __init armctrl_of_init(struct device_node *node,
-		struct device_node *parent)
+	struct device_node *parent)
 {
-	struct of_armctrl_ic *data = of_read_armctrl_ic(node);
-	int nr_irqs, irq, i;
+	struct resource res;
+	void __iomem *base;
+	int ret, irq, b, i;
 
-	if (parent != NULL) {
-		armctrl_of_link(node->full_name, node->data, parent->data);
-	} else if (intc != NULL) {
-		panic("%s: multiple top level vics\n", node->full_name);
-	} else {
-		intc = data->ic;
-	}
-
-	data->ic->domain = irq_domain_add_linear(node, 32,
-		&irq_domain_simple_ops, NULL);
-	if (!data->ic->domain)
-		panic("%s: unable to create IRQ domain\n",
+	ret = of_address_to_resource(node, 0, &res);
+	if (ret)
+		panic("%s: unable to find IC registers\n",
 			node->full_name);
 
-	nr_irqs = 0;
-	for (i = 0; i < 32; i++) {
-		if (!(data->ic->source_mask & BIT(i)))
-			continue;
+	base = ioremap(res.start, resource_size(&res));
+	if (!base)
+		panic("%s: unable to map IC registers\n",
+			node->full_name);
 
-		irq = irq_create_mapping(data->ic->domain, i);
-		BUG_ON(irq <= 0);
-		irq_set_chip_and_handler(irq, &armctrl_chip, handle_level_irq);
-		irq_set_chip_data(irq, data->ic);
-		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
-		nr_irqs++;
+	if (!request_region(res.start, resource_size(&res), node->full_name))
+		panic("%s: unable to request resources for IC registers\n",
+			node->full_name);
+
+	intc.domain = irq_domain_add_linear(node, IRQS_PER_BANK * NR_BANKS,
+		&armctrl_ops, NULL);
+	if (!intc.domain)
+		panic("%s: unable to create IRQ domain\n", node->full_name);
+
+	for (b = 0; b < NR_BANKS; b++) {
+		intc.pending[b] = base + reg_pending[b];
+		intc.enable[b] = base + reg_enable[b];
+		intc.disable[b] = base + reg_disable[b];
+
+		for (i = 0; i < bank_irqs[b]; i++) {
+			irq = irq_create_mapping(intc.domain, MAKE_HWIRQ(b, i));
+			BUG_ON(irq <= 0);
+			irq_set_chip_and_handler(irq, &armctrl_chip,
+				handle_level_irq);
+			set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
+		}
 	}
-
-	if (parent != NULL) {
-		armctrl_of_link_shortcuts(node->data, parent->data);
-
-		printk(KERN_INFO "%s: VIC at %#lx (%d IRQs)\n",
-			node->name, data->base, nr_irqs);
-	} else {
-		printk(KERN_INFO "%s: VIC at %#lx (%d IRQs)\n",
-			node->name, data->base, nr_irqs);
-	}
-
 	return 0;
 }
 
@@ -303,28 +205,42 @@ void __init bcm2708_init_irq(void)
  * status register before handling each interrupt, which is necessary given that
  * handle_IRQ may briefly re-enable interrupts for soft IRQ handling.
  */
-static void handle_one_irq(struct pt_regs *regs, struct armctrl_ic *dev)
+
+static void armctrl_handle_bank(int bank, struct pt_regs *regs)
 {
 	u32 stat, irq;
 
-	while ((stat = readl_relaxed(dev->pending) & dev->valid_mask)) {
-		if (stat & dev->source_mask) {
-			irq = ffs(stat & dev->source_mask) - 1;
-			handle_IRQ(irq_linear_revmap(dev->domain, irq), regs);
-		} else if (stat & dev->shortcut_mask) {
-			irq = ffs(stat & dev->shortcut_mask) - 1;
-			handle_IRQ(irq_linear_revmap(dev->shortcuts[irq].domain,
-				dev->shortcuts[irq].irq), regs);
-		} else if (stat & dev->bank_mask) {
-			irq = ffs(stat & dev->bank_mask) - 1;
-			handle_one_irq(regs, dev->banks[irq]);
-		} else {
-			BUG();
-		}
+	while ((stat = readl_relaxed(intc.pending[bank]))) {
+		irq = MAKE_HWIRQ(bank, ffs(stat) - 1);
+		handle_IRQ(irq_linear_revmap(intc.domain, irq), regs);
 	}
+}
+
+static void armctrl_handle_shortcut(int bank, struct pt_regs *regs,
+	u32 stat)
+{
+	u32 irq = MAKE_HWIRQ(bank, shortcuts[ffs(stat >> SHORTCUT_SHIFT) - 1]);
+	handle_IRQ(irq_linear_revmap(intc.domain, irq), regs);
 }
 
 asmlinkage void __exception_irq_entry armctrl_handle_irq(struct pt_regs *regs)
 {
-	handle_one_irq(regs, intc);
+	u32 stat, irq;
+
+	while ((stat = readl_relaxed(intc.pending[0]) & BANK0_VALID_MASK)) {
+		if (stat & BANK0_HWIRQ_MASK) {
+			irq = MAKE_HWIRQ(0, ffs(stat & BANK0_HWIRQ_MASK) - 1);
+			handle_IRQ(irq_linear_revmap(intc.domain, irq), regs);
+		} else if (stat & SHORTCUT1_MASK) {
+			armctrl_handle_shortcut(1, regs, stat & SHORTCUT1_MASK);
+		} else if (stat & SHORTCUT2_MASK) {
+			armctrl_handle_shortcut(2, regs, stat & SHORTCUT2_MASK);
+		} else if (stat & BANK1_HWIRQ) {
+			armctrl_handle_bank(1, regs);
+		} else if (stat & BANK2_HWIRQ) {
+			armctrl_handle_bank(2, regs);
+		} else {
+			BUG();
+		}
+	}
 }

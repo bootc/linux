@@ -53,16 +53,16 @@ void __init bcm2708_map_io(void)
 
 static void __init bcm2708_of_system(void)
 {
-	struct device_node *root = of_find_node_by_path("/");
+	struct device_node *system = of_find_node_by_path("/system");
 
-	if (root) {
+	if (system) {
 		u32 rev;
 		u64 serial;
 
-		if (!of_property_read_u32(root, "system-rev", &rev))
+		if (!of_property_read_u32(system, "revision", &rev))
 			system_rev = rev;
 
-		if (!of_property_read_u64(root, "system-serial", &serial)) {
+		if (!of_property_read_u64(system, "serial", &serial)) {
 			system_serial_low = (u32)serial;
 			system_serial_high = (u32)(serial >> 32);
 		}

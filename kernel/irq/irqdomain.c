@@ -761,11 +761,12 @@ static int __init irq_debugfs_init(void)
 __initcall(irq_debugfs_init);
 #endif /* CONFIG_IRQ_DOMAIN_DEBUG */
 
-static int irq_domain_simple_map(struct irq_domain *d, unsigned int irq,
+int irq_domain_simple_map(struct irq_domain *d, unsigned int irq,
 				 irq_hw_number_t hwirq)
 {
 	return 0;
 }
+EXPORT_SYMBOL_GPL(irq_domain_simple_map);
 
 /**
  * irq_domain_xlate_onecell() - Generic xlate for direct one cell bindings

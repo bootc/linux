@@ -159,6 +159,10 @@ extern unsigned int irq_linear_revmap(struct irq_domain *host,
 
 extern const struct irq_domain_ops irq_domain_simple_ops;
 
+/* no-op map function */
+int irq_domain_simple_map(struct irq_domain *d, unsigned int irq,
+			irq_hw_number_t hwirq);
+
 /* stock xlate functions */
 int irq_domain_xlate_onecell(struct irq_domain *d, struct device_node *ctrlr,
 			const u32 *intspec, unsigned int intsize,
