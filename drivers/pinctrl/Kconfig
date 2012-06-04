@@ -141,7 +141,6 @@ config PINCTRL_BCM2708
 	bool "Broadcom BCM2708 GPIO pin controller driver"
 	depends on MACH_BCM2708 && OF
 	select PINMUX
-	select GENERIC_PINCONF
 
 source "drivers/pinctrl/spear/Kconfig"
 

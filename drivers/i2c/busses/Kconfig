@@ -312,7 +312,7 @@ config I2C_AU1550
 config I2C_BCM2708
 	tristate "BCM2708 BSC"
 	depends on MACH_BCM2708
-	select PINCONF
+	select PINMUX
 	help
 	  Enabling this option will add BSC (Broadcom Serial Controller)
 	  support for the BCM2708. BSC is a Broadcom proprietary bus compatible
