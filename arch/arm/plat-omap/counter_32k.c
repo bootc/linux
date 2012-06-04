@@ -95,7 +95,7 @@ int __init omap_init_clocksource_32k(void __iomem *vbase)
 	clocks_calc_mult_shift(&persistent_mult, &persistent_shift,
 			32768, NSEC_PER_SEC, 120000);
 
-	clocksrc = clocksource_mmio_init(sync32k_cnt_reg, "32k_counter", 32768,
+	ret = clocksource_mmio_init(sync32k_cnt_reg, "32k_counter", 32768,
 				250, 32, clocksource_mmio_readl_up);
 	if (ret) {
 		pr_err("32k_counter: can't register clocksource\n");
