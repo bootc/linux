@@ -97,13 +97,6 @@ config GPIO_GENERIC_PLATFORM
 	help
 	  Say yes here to support basic platform_device memory-mapped GPIO controllers.
 
-config GPIO_BCM2708
-	tristate "BCM2708 GPIO support"
-	depends on MACH_BCM2708 && OF && PINCTRL_BCM2708
-	default y if MACH_BCM2708
-	help
-	  Say yes here to support GPIO functionality of the BCM2708.
-
 config GPIO_IT8761E
 	tristate "IT8761E GPIO support"
 	depends on X86  # unconditional access to IO space.
