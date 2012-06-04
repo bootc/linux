@@ -21,10 +21,7 @@
 #include <linux/amba/serial.h>
 #include <mach/hardware.h>
 
-#define UART_BAUD 115200
 #define UART0_BASE BCM2708_DEBUG_PHYS
-#define UART0_CLOCK BCM2708_DEBUG_CLOCK
-
 #define BCM2708_UART_DR	UART0_BASE + UART01x_DR
 #define BCM2708_UART_FR	UART0_BASE + UART01x_FR
 #define BCM2708_UART_CR UART0_BASE + UART011_CR
