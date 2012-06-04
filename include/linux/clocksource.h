@@ -338,20 +338,13 @@ static inline void update_vsyscall_tz(void)
 
 extern void timekeeping_notify(struct clocksource *clock);
 
-struct clocksource_mmio {
-	void __iomem *reg;
-	struct clocksource clksrc;
-};
-
 extern cycle_t clocksource_mmio_readl_up(struct clocksource *);
 extern cycle_t clocksource_mmio_readl_down(struct clocksource *);
 extern cycle_t clocksource_mmio_readw_up(struct clocksource *);
 extern cycle_t clocksource_mmio_readw_down(struct clocksource *);
 
-extern struct clocksource_mmio *clocksource_mmio_init(void __iomem *,
-	const char *, unsigned long, int, unsigned,
-	cycle_t (*)(struct clocksource *));
-extern void clocksource_mmio_remove(struct clocksource_mmio *);
+extern int clocksource_mmio_init(void __iomem *, const char *,
+	unsigned long, int, unsigned, cycle_t (*)(struct clocksource *));
 
 extern int clocksource_i8253_init(void);
 

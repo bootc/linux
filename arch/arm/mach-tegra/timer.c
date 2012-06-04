@@ -222,8 +222,8 @@ static void __init tegra_init_timer(void)
 
 	setup_sched_clock(tegra_read_sched_clock, 32, 1000000);
 
-	if (IS_ERR(clocksource_mmio_init(timer_reg_base + TIMERUS_CNTR_1US,
-		"timer_us", 1000000, 300, 32, clocksource_mmio_readl_up))) {
+	if (clocksource_mmio_init(timer_reg_base + TIMERUS_CNTR_1US,
+		"timer_us", 1000000, 300, 32, clocksource_mmio_readl_up)) {
 		printk(KERN_ERR "Failed to register clocksource\n");
 		BUG();
 	}

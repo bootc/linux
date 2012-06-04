@@ -15,8 +15,8 @@
 #include <mach/hardware.h>
 
 		.macro	addruart, rp, rv, tmp
-		ldr	\rp, =BCM2708_DEBUG_BASE
-		ldr	\rv, =IO_ADDRESS(BCM2708_DEBUG_BASE)
+		ldr	\rp, =BCM2708_DEBUG_PHYS
+		ldr	\rv, =BCM2708_DEBUG_VIRT
 		.endm
 
 #include <asm/hardware/debug-pl01x.S>

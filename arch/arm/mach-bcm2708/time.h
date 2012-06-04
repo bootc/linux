@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2010 Broadcom
+ *  Copyright 2012 Simon Arlott
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,12 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
-#ifndef __ASM_ARCH_HARDWARE_H
-#define __ASM_ARCH_HARDWARE_H
 
-#define BCM2708_DEBUG_PHYS	0x20201000
-#define BCM2708_DEBUG_VIRT	0xf0000000
-#define BCM2708_DEBUG_CLOCK	3000000
-#define BCM2708_DEBUG_SIZE	SZ_4K
+#ifndef __BCM2708_TIME_H
+#define __BCM2708_TIME_H
+
+extern void bcm2708_time_init(void);
 
 #endif

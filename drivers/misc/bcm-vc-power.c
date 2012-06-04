@@ -66,7 +66,7 @@ static int __devinit bcm_vc_power_mgr_probe(struct platform_device *of_dev)
 
 	mgr->dev = &of_dev->dev;
 	mutex_init(&mgr->lock);
-	mgr->mbox = bcm_mbox_get(node, "vc_mailbox", "vc_channel");
+	mgr->mbox = bcm_mbox_get(node, "broadcom,vc-mailbox", "broadcom,vc-channel");
 
 	if (!mgr->mbox) {
 		dev_err(mgr->dev, "unable to find mailbox channel\n");
@@ -163,10 +163,10 @@ struct bcm_vc_power_dev *bcm_vc_power_get(struct device_node *node,
 		return ERR_PTR(-EINVAL);
 
 	if (pname == NULL)
-		pname = "vc_power";
+		pname = "broadcom,vc-power";
 
 	if (pindex == NULL)
-		pindex = "vc_index";
+		pindex = "broadcom,vc-index";
 
 	if (of_property_read_u32(node, pindex, &index))
 		return ERR_PTR(-EINVAL);

@@ -22,12 +22,12 @@
 	display {
 		compatible = "broadcom,bcm2835-fb", "broadcom,bcm2708-fb";
 
-		vc_mailbox = <&vc_mbox>;
-		vc_channel = <1>;
+		broadcom,vc-mailbox = <&vc_mbox>;
+		broadcom,vc-channel = <1>;
 
-		width = <0>;			/* Set by VideoCore */
-		height = <0>;			/* Set by VideoCore */
-		depth = <0>;			/* Set by VideoCore */
+		broadcom,width = <0>;		/* Set by VideoCore */
+		broadcom,height = <0>;		/* Set by VideoCore */
+		broadcom,depth = <0>;		/* Set by VideoCore */
 	};
 
 	power: power {
@@ -35,8 +35,8 @@
 		#address-cells = <0>;
 		#size-cells = <0>;
 
-		vc_mailbox = <&vc_mbox>;
-		vc_channel = <0>;
+		broadcom,vc-mailbox = <&vc_mbox>;
+		broadcom,vc-channel = <0>;
 
 		/* Devices
 		 * 0: SD Card
@@ -55,65 +55,10 @@
 		ranges = <0 0x20000000 0x01000000>;
 		interrupt-parent = <&intc>;
 
-		stc {
-			compatible = "broadcom,bcm2835-clock", "broadcom,bcm2708-clock", "mmio-clock", "simple-bus";
-			#address-cells = <1>;
-			#size-cells = <1>;
-			reg = <0x3004 0x4 0x3000 0x4>;
-			reg-names = "counter", "control";
-			ranges;
-
-			clock-outputs = "sys";
-			clock-frequency = <1000000>;
-			rating = <300>;
-
-			/* DO NOT USE (it doesn't work) */
-			timer0 {
-				compatible = "broadcom,bcm2835-timer", "broadcom,bcm2708-clock", "mmio-timer";
-				reg = <0x300c 0x4>;
-				reg-names = "compare";
-				interrupts = <1 0>;
-
-				index = <0>;
-				rating = <0>;
-				min-delta = <0xf>;
-			};
-
-			/* Usable system timer */
-			timer1 {
-				compatible = "broadcom,bcm2835-timer", "broadcom,bcm2708-clock", "mmio-timer";
-				reg = <0x3010 0x4>;
-				reg-names = "compare";
-				interrupts = <1 1>;
-
-				index = <1>;
-				rating = <200>;
-				min-delta = <0xf>;
-			};
-
-			/* DO NOT USE (generates extra interrupts) */
-			timer2 {
-				compatible = "broadcom,bcm2835-timer", "broadcom,bcm2708-clock", "mmio-timer";
-				reg = <0x3014 0x4>;
-				reg-names = "compare";
-				interrupts = <1 2>;
-
-				index = <2>;
-				rating = <0>;
-				min-delta = <0xf>;
-			};
-
-			/* Usable system timer */
-			timer3 {
-				compatible = "broadcom,bcm2835-timer", "broadcom,bcm2708-clock", "mmio-timer";
-				reg = <0x3018 0x4>;
-				reg-names = "compare";
-				interrupts = <1 3>;
-
-				index = <3>;
-				rating = <300>;
-				min-delta = <0xf>;
-			};
+		timer {
+			compatible = "broadcom,bcm2835-system-timer", "broadcom,bcm2708-system-timer";
+			reg = <0x3000 0x1000>;
+			interrupts = <1 0>, <1 1>, <1 2>, <1 3>;
 		};
 
 		dma: dma {
@@ -188,7 +133,7 @@
 			interrupts = <0 0>;
 		};
 
-		vc_bell0: bell0 {
+		vc_bell0: bell {
 			compatible = "broadcom,bcm2835-bell", "broadcom,bcm2708-bell";
 			reg = <0xB840 0x4>;
 			interrupts = <0 2>;
@@ -196,7 +141,7 @@
 			access = "r-";
 		};
 
-		vc_bell1: bell1 {
+		vc_bell1: bell {
 			compatible = "broadcom,bcm2835-bell", "broadcom,bcm2708-bell";
 			reg = <0xB844 0x4>;
 			interrupts = <0 3>;
@@ -204,21 +149,21 @@
 			access = "r-";
 		};
 
-		vc_bell2: bell2 {
+		vc_bell2: bell {
 			compatible = "broadcom,bcm2835-bell", "broadcom,bcm2708-bell";
 			reg = <0xB848 0x4>;
 
 			access = "-w";
 		};
 
-		vc_bell3: bell3 {
+		vc_bell3: bell {
 			compatible = "broadcom,bcm2835-bell", "broadcom,bcm2708-bell";
 			reg = <0xB84c 0x4>;
 
 			access = "-w";
 		};
 
-		vc_mbox: mbox0 {
+		vc_mbox: mbox {
 			compatible = "broadcom,bcm2835-mbox", "broadcom,bcm2708-mbox";
 			reg = <0xB880 0x40>;
 			interrupts = <0 1>;
@@ -260,9 +205,10 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&pins_reserved>;
 
-			/* pins used by VideoCore */
-			broadcom,read-only = <46>, <47>, <48>, <49>,
-				<50>, <51>, <52>, <53>;
+			/* pins that can short 3.3V to GND in output mode: 46-47
+			 * pins used by VideoCore: 48-53
+			 */
+			broadcom,read-only = <46>, <47>, <48>, <49>, <50>, <51>, <52>, <53>;
 
 			/* BSC0 */
 			pins_bsc0_a: bsc0_a {
@@ -440,8 +386,7 @@
 			};
 
 			pins_sm_addr_b: sm_addr_b {
-				broadcom,pins = <33>, <32>, <31>, <30>, <29>,
-					<28>;
+				broadcom,pins = <33>, <32>, <31>, <30>, <29>, <28>;
 				broadcom,function = "ALT1";
 			};
 
@@ -456,20 +401,17 @@
 			};
 
 			pins_sm_data_8bit_a: sm_data_8bit_a {
-				broadcom,pins = <8>, <9>, <10>, <11>, <12>,
-					<13>, <14>, <15>;
+				broadcom,pins = <8>, <9>, <10>, <11>, <12>, <13>, <14>, <15>;
 				broadcom,function = "ALT1";
 			};
 
 			pins_sm_data_8bit_b: sm_data_8bit_b {
-				broadcom,pins = <36>, <37>, <38>, <39>, <40>,
-				       <41>, <42>, <43>;
+				broadcom,pins = <36>, <37>, <38>, <39>, <40>, <41>, <42>, <43>;
 				broadcom,function = "ALT1";
 			};
 
 			pins_sm_data_16bit: sm_data_16bit {
-				broadcom,pins = <16>, <17>, <18>, <19>, <20>,
-				       <21>, <22>, <23>;
+				broadcom,pins = <16>, <17>, <18>, <19>, <20>, <21>, <22>, <23>;
 				broadcom,function = "ALT1";
 			};
 
@@ -491,8 +433,7 @@
 
 			/* SPI1 */
 			pins_spi1: spi1 {
-				broadcom,pins = <16>, <17>, <18>, <19>, <20>,
-					<21>;
+				broadcom,pins = <16>, <17>, <18>, <19>, <20>, <21>;
 				broadcom,function = "ALT4";
 			};
 
@@ -529,8 +470,7 @@
 
 			/* SPI2 */
 			pins_spi2: spi2 {
-				broadcom,pins = <40>, <41>, <42>, <43>, <44>,
-				       <45>;
+				broadcom,pins = <40>, <41>, <42>, <43>, <44>, <45>;
 				broadcom,function = "ALT4";
 			};
 
@@ -552,8 +492,7 @@
 
 			/* Reserved */
 			pins_reserved: reserved {
-				broadcom,pins = <48>, <49>, <50>, <51>,
-					<52>, <53>;
+				broadcom,pins = <48>, <49>, <50>, <51>, <52>, <53>;
 				broadcom,function = "ALT3";
 			};
 		};
@@ -600,8 +539,8 @@
 			reg = <0x980000 0x20000>;
 			interrupts = <1 9>;
 
-			vc_power = <&power>;
-			vc_index = <3>;
+			broadcom,vc-power = <&power>;
+			broadcom,vc-index = <3>;
 		};
 	};
 };

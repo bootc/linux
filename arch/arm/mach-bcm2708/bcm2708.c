@@ -29,19 +29,19 @@
 #include <mach/hardware.h>
 #include <asm/hardware/timer-sp.h>
 
-#include "../../../drivers/clocksource/mmio_of.h"
 #include "../../../drivers/watchdog/bcm2708_wdog.h"
 #include "clock.h"
 #include "irq.h"
+#include "time.h"
 
 module_param_named(boardrev, system_rev, uint, 0);
 module_param_named(serial, system_serial_low, uint, 0);
 
 static struct map_desc bcm2708_io_desc[] __initdata = {
 	{
-		.virtual = IO_ADDRESS(BCM2708_PERIPH_BASE),
-		.pfn = __phys_to_pfn(BCM2708_PERIPH_BASE),
-		.length = BCM2708_PERIPH_SIZE,
+		.virtual = BCM2708_DEBUG_VIRT,
+		.pfn = __phys_to_pfn(BCM2708_DEBUG_PHYS),
+		.length = BCM2708_DEBUG_SIZE,
 		.type = MT_DEVICE
 	}
 };
@@ -97,8 +97,7 @@ static void __init bcm2708_timer_init(void)
 		sp804_disable(of_iomap(node, 0));
 	}
 
-	clocksource_mmio_of_init();
-	clockevent_mmio_of_init();
+	bcm2708_time_init();
 }
 
 struct sys_timer bcm2708_timer = {

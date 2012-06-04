@@ -80,11 +80,14 @@ struct bcm2708_pinctrl {
 	int irq[BCM2708_NUM_BANKS];
 
 	unsigned long readonly_map[BCM2708_PIN_BITMAP_SZ];
+	/* note: locking assumes each bank will have its own unsigned long */
 	unsigned long masked_irq_map[BCM2708_PIN_BITMAP_SZ];
 	unsigned int irq_type[BCM2708_NUM_GPIOS];
 
 	struct pinctrl_dev *pctl_dev;
 	struct irq_domain *irq_domain;
+	struct gpio_chip gpio_chip;
+	struct pinctrl_gpio_range gpio_range;
 
 	struct bcm2708_gpio_irqdata irq_data[BCM2708_NUM_BANKS];
 	spinlock_t irq_lock[BCM2708_NUM_BANKS];
@@ -381,7 +384,7 @@ static int bcm2708_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 	return irq_linear_revmap(pc->irq_domain, offset);
 }
 
-static struct gpio_chip bcm2708_gpio_chip = {
+static struct gpio_chip bcm2708_gpio_chip __devinitconst = {
 	.label = MODULE_NAME,
 	.owner = THIS_MODULE,
 	.request = bcm2708_gpio_request,
@@ -862,7 +865,6 @@ static int bcm2708_pmx_gpio_request_enable(struct pinctrl_dev *pctldev,
 		unsigned offset)
 {
 	struct bcm2708_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
-	enum bcm2708_fsel cur;
 
 	struct pin_desc *desc = pin_desc_get(pctldev, offset);
 	if (desc->mux_usecount)
@@ -926,12 +928,11 @@ static struct pinctrl_desc bcm2708_pinctrl_desc = {
 	.owner = THIS_MODULE,
 };
 
-static struct pinctrl_gpio_range bcm2708_pinctrl_gpio_range = {
+static struct pinctrl_gpio_range bcm2708_pinctrl_gpio_range __devinitconst = {
 	.name = "GPIO",
 	.base = 0,
 	.pin_base = 0,
 	.npins = ARRAY_SIZE(bcm2708_gpio_pins),
-	.gc = &bcm2708_gpio_chip,
 };
 
 static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
@@ -972,8 +973,9 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 	if (!pc->base)
 		return -EADDRNOTAVAIL;
 
-	bcm2708_gpio_chip.dev = dev;
-	bcm2708_gpio_chip.of_node = np;
+	pc->gpio_chip = bcm2708_gpio_chip;
+	pc->gpio_chip.dev = dev;
+	pc->gpio_chip.of_node = np;
 
 	pc->irq_domain = irq_domain_add_linear(np, BCM2708_NUM_GPIOS,
 			&irq_domain_simple_ops, NULL);
@@ -1018,7 +1020,7 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 		irq_set_handler_data(pc->irq[i], &pc->irq_data[i]);
 	}
 
-	err = gpiochip_add(&bcm2708_gpio_chip);
+	err = gpiochip_add(&pc->gpio_chip);
 	if (err) {
 		dev_err(dev, "could not add GPIO chip\n");
 		return err;
@@ -1028,7 +1030,10 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 	if (IS_ERR(pc->pctl_dev))
 		return PTR_ERR(pc->pctl_dev);
 
-	pinctrl_add_gpio_range(pc->pctl_dev, &bcm2708_pinctrl_gpio_range);
+	pc->gpio_range = bcm2708_pinctrl_gpio_range;
+	pc->gpio_range.gc = &pc->gpio_chip;
+
+	pinctrl_add_gpio_range(pc->pctl_dev, &pc->gpio_range);
 
 	platform_set_drvdata(pdev, pc);
 
@@ -1039,7 +1044,7 @@ static int __devexit bcm2708_pinctrl_remove(struct platform_device *pdev)
 {
 	struct bcm2708_pinctrl *pc = platform_get_drvdata(pdev);
 
-	pinctrl_remove_gpio_range(pc->pctl_dev, &bcm2708_pinctrl_gpio_range);
+	pinctrl_remove_gpio_range(pc->pctl_dev, &pc->gpio_range);
 	pinctrl_unregister(pc->pctl_dev);
 
 	return 0;

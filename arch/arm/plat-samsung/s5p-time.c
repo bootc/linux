@@ -346,8 +346,8 @@ static void __init s5p_clocksource_init(void)
 
 	setup_sched_clock(s5p_read_sched_clock, 32, clock_rate);
 
-	if (IS_ERR(clocksource_mmio_init(s5p_timer_reg(), "s5p_clocksource_timer",
-			clock_rate, 250, 32, clocksource_mmio_readl_down)))
+	if (clocksource_mmio_init(s5p_timer_reg(), "s5p_clocksource_timer",
+			clock_rate, 250, 32, clocksource_mmio_readl_down))
 		panic("s5p_clocksource_timer: can't register clocksource\n");
 }
 

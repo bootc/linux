@@ -81,7 +81,7 @@ static void omap_read_persistent_clock(struct timespec *ts)
  */
 int __init omap_init_clocksource_32k(void __iomem *vbase)
 {
-	struct clocksource_mmio *clocksrc;
+	int ret;
 
 	/*
 	 * 32k sync Counter register offset is at 0x10
@@ -97,9 +97,9 @@ int __init omap_init_clocksource_32k(void __iomem *vbase)
 
 	clocksrc = clocksource_mmio_init(sync32k_cnt_reg, "32k_counter", 32768,
 				250, 32, clocksource_mmio_readl_up);
-	if (IS_ERR(clocksrc)) {
+	if (ret) {
 		pr_err("32k_counter: can't register clocksource\n");
-		return PTR_ERR(clocksrc);
+		return ret;
 	}
 
 	setup_sched_clock(omap_32k_read_sched_clock, 32, 32768);

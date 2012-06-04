@@ -9,7 +9,11 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/err.h>
+
+struct clocksource_mmio {
+	void __iomem *reg;
+	struct clocksource clksrc;
+};
 
 static inline struct clocksource_mmio *to_mmio_clksrc(struct clocksource *c)
 {
@@ -45,19 +49,18 @@ cycle_t clocksource_mmio_readw_down(struct clocksource *c)
  * @bits:	Number of valid bits
  * @read:	One of clocksource_mmio_read*() above
  */
-struct clocksource_mmio __devinit *clocksource_mmio_init(void __iomem *base,
-	const char *name, unsigned long hz, int rating, unsigned bits,
+int __init clocksource_mmio_init(void __iomem *base, const char *name,
+	unsigned long hz, int rating, unsigned bits,
 	cycle_t (*read)(struct clocksource *))
 {
 	struct clocksource_mmio *cs;
-	int ret;
 
 	if (bits > 32 || bits < 16)
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 
 	cs = kzalloc(sizeof(struct clocksource_mmio), GFP_KERNEL);
 	if (!cs)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
 	cs->reg = base;
 	cs->clksrc.name = name;
@@ -66,21 +69,5 @@ struct clocksource_mmio __devinit *clocksource_mmio_init(void __iomem *base,
 	cs->clksrc.mask = CLOCKSOURCE_MASK(bits);
 	cs->clksrc.flags = CLOCK_SOURCE_IS_CONTINUOUS;
 
-	ret = clocksource_register_hz(&cs->clksrc, hz);
-	if (ret) {
-		kfree(cs);
-		return ERR_PTR(ret);
-	}
-
-	return cs;
-}
-
-/**
- * clocksource_mmio_setup - Setup a simple mmio based clocksource
- * @cs:         MMIO clock source
- */
-void clocksource_mmio_remove(struct clocksource_mmio *cs)
-{
-	clocksource_unregister(&cs->clksrc);
-	kfree(cs);
+	return clocksource_register_hz(&cs->clksrc, hz);
 }

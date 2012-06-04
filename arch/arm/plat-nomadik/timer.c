@@ -207,8 +207,8 @@ void __init nmdk_timer_init(void __iomem *base)
 	/* Timer 0 is the free running clocksource */
 	nmdk_clksrc_reset();
 
-	if (IS_ERR(clocksource_mmio_init(mtu_base + MTU_VAL(0), "mtu_0",
-			rate, 200, 32, clocksource_mmio_readl_down)))
+	if (clocksource_mmio_init(mtu_base + MTU_VAL(0), "mtu_0",
+			rate, 200, 32, clocksource_mmio_readl_down))
 		pr_err("timer: failed to initialize clock source %s\n",
 		       "mtu_0");
 

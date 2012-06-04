@@ -364,7 +364,7 @@ static int bcm2708_fb_probe(struct platform_device *of_dev)
 		return -ENOMEM;
 
 	fb->dev = &of_dev->dev;
-	fb->mbox = bcm_mbox_get(node, "vc_mailbox", "vc_channel");
+	fb->mbox = bcm_mbox_get(node, "broadcom,vc-mailbox", "broadcom,vc-channel");
 
 	if (IS_ERR(fb->mbox)) {
 		dev_err(fb->dev, "unable to find VideoCore mailbox (%ld)",
@@ -373,9 +373,9 @@ static int bcm2708_fb_probe(struct platform_device *of_dev)
 		return PTR_ERR(fb->mbox);
 	}
 
-	bcm2708_fb_of_prop(node, "width", &fbwidth);
-	bcm2708_fb_of_prop(node, "height", &fbheight);
-	bcm2708_fb_of_prop(node, "depth", &fbdepth);
+	bcm2708_fb_of_prop(node, "broadcom,width", &fbwidth);
+	bcm2708_fb_of_prop(node, "broadcom,height", &fbheight);
+	bcm2708_fb_of_prop(node, "broadcom,depth", &fbdepth);
 
 	ret = bcm2708_fb_register(fb);
 	if (ret) {

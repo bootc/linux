@@ -203,8 +203,8 @@ static void __init omap_init_clocksource(unsigned long rate)
 	omap_mpu_timer_start(1, ~0, 1);
 	setup_sched_clock(omap_mpu_read_sched_clock, 32, rate);
 
-	if (IS_ERR(clocksource_mmio_init(&timer->read_tim, "mpu_timer2", rate,
-			300, 32, clocksource_mmio_readl_down)))
+	if (clocksource_mmio_init(&timer->read_tim, "mpu_timer2", rate,
+			300, 32, clocksource_mmio_readl_down))
 		printk(err, "mpu_timer2");
 }
 
