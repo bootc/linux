@@ -328,12 +328,7 @@ void sdhci_bcm2708_writeb(struct sdhci_host *host, u8 val, int reg)
 
 static unsigned int sdhci_bcm2708_get_max_clock(struct sdhci_host *host)
 {
-	return 100000000;	// this value is in Hz (100MHz/4)
-}
-
-static unsigned int sdhci_bcm2708_get_timeout_clock(struct sdhci_host *host)
-{
-	return 100000;		// this value is in kHz (100MHz/4)
+	return BCM2708_EMMC_CLOCK_FREQ;
 }
 
 /*****************************************************************************\
@@ -1222,11 +1217,7 @@ static struct sdhci_ops sdhci_bcm2708_ops = {
 #else
 #error The BCM2708 SDHCI driver needs CONFIG_MMC_SDHCI_IO_ACCESSORS to be set
 #endif
-	//.enable_dma = NULL,
-	//.set_clock = NULL,
 	.get_max_clock = sdhci_bcm2708_get_max_clock,
-	//.get_min_clock = NULL,
-	.get_timeout_clock = sdhci_bcm2708_get_timeout_clock,
 
 	.enable = sdhci_bcm2708_enable,
 	.disable = sdhci_bcm2708_disable,
