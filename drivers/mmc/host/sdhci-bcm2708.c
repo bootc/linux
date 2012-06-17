@@ -71,6 +71,9 @@
 
 #define BCM2708_SDHCI_SLEEP_TIMEOUT 1000   /* msecs */
 
+/* Mhz clock that the EMMC core is running at. Should match the platform clockman settings */
+#define BCM2708_EMMC_CLOCK_FREQ 50000000
+
 #define POWER_OFF 0
 #define POWER_LAZY_OFF 1
 #define POWER_ON  2
@@ -129,6 +132,8 @@ static inline unsigned long int since_ns(hptime_t t)
 {
 	return (unsigned long)((hptime() - t) * HPTIME_CLK_NS);
 }
+
+static bool allow_highspeed = 1;
 
 #if 0
 static void hptime_test(void)
@@ -328,12 +333,7 @@ void sdhci_bcm2708_writeb(struct sdhci_host *host, u8 val, int reg)
 
 static unsigned int sdhci_bcm2708_get_max_clock(struct sdhci_host *host)
 {
-	return 100000000;	// this value is in Hz (100MHz/4)
-}
-
-static unsigned int sdhci_bcm2708_get_timeout_clock(struct sdhci_host *host)
-{
-	return 100000;		// this value is in kHz (100MHz/4)
+	return BCM2708_EMMC_CLOCK_FREQ;
 }
 
 /*****************************************************************************\
@@ -811,7 +811,7 @@ static void sdhci_bcm2708_dma_complete_irq(struct sdhci_host *host,
 		   We get CRC and DEND errors unless we wait for
 		   the SD controller to finish reading/writing to the card. */
 		u32 state_mask;
-		int timeout=1000;
+		int timeout=5000;
 
 		DBG("PDMA over - sync card\n");
 		if (data->flags & MMC_DATA_READ)
@@ -822,7 +822,7 @@ static void sdhci_bcm2708_dma_complete_irq(struct sdhci_host *host,
 		while (0 != (sdhci_bcm2708_raw_readl(host, SDHCI_PRESENT_STATE) 
 			& state_mask) && --timeout > 0)
 		{
-			udelay(100);
+			udelay(30);
 			continue;
 		}
 		if (timeout <= 0)
@@ -1222,11 +1222,7 @@ static struct sdhci_ops sdhci_bcm2708_ops = {
 #else
 #error The BCM2708 SDHCI driver needs CONFIG_MMC_SDHCI_IO_ACCESSORS to be set
 #endif
-	//.enable_dma = NULL,
-	//.set_clock = NULL,
 	.get_max_clock = sdhci_bcm2708_get_max_clock,
-	//.get_min_clock = NULL,
-	.get_timeout_clock = sdhci_bcm2708_get_timeout_clock,
 
 	.enable = sdhci_bcm2708_enable,
 	.disable = sdhci_bcm2708_disable,
@@ -1287,7 +1283,11 @@ static int __devinit sdhci_bcm2708_probe(struct platform_device *pdev)
 	host->irq = platform_get_irq(pdev, 0);
 
 	host->quirks = SDHCI_QUIRK_BROKEN_CARD_DETECTION |
-		       SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK;
+		       SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK |
+		       SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
+               SDHCI_QUIRK_MISSING_CAPS |
+               SDHCI_QUIRK_NO_HISPD_BIT;
+
 #ifdef CONFIG_MMC_SDHCI_BCM2708_DMA
 	host->flags = SDHCI_USE_PLATDMA;
 #endif
@@ -1354,6 +1354,9 @@ static int __devinit sdhci_bcm2708_probe(struct platform_device *pdev)
 	    host_priv->cb_base, (unsigned)host_priv->cb_handle,
 	    host_priv->dma_chan, host_priv->dma_chan_base,
 	    host_priv->dma_irq);
+
+    if (allow_highspeed)
+        host->mmc->caps |= MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED;
 #endif
 
 	ret = sdhci_add_host(host);
@@ -1459,8 +1462,12 @@ static void __exit sdhci_drv_exit(void)
 module_init(sdhci_drv_init);
 module_exit(sdhci_drv_exit);
 
+module_param(allow_highspeed, bool, 0444);
+
 MODULE_DESCRIPTION("Secure Digital Host Controller Interface platform driver");
 MODULE_AUTHOR("Broadcom <info@broadcom.com>");
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:"DRIVER_NAME);
+
+MODULE_PARM_DESC(allow_highspeed, "Allow high speed transfers modes");
 
