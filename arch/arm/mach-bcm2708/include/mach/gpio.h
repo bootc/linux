@@ -10,6 +10,7 @@
 #define __ASM_ARCH_GPIO_H
 
 #define ARCH_NR_GPIOS 54 // number of gpio lines
+#define BCM_NR_GPIOS 54 // number of gpio lines
 
 #include <asm-generic/gpio.h>
 

@@ -74,7 +74,7 @@ static int bcm2708_set_function(struct gpio_chip *gc, unsigned offset, int funct
         unsigned gpio_field_offset = (offset - 10*gpio_bank) * 3;
 
 //printk(KERN_ERR DRIVER_NAME ": bcm2708_gpio_set_function %p (%d,%d)\n", gc, offset, function);
-	if (offset >= ARCH_NR_GPIOS)
+	if (offset >= BCM_NR_GPIOS)
 		return -EINVAL;
 
 	spin_lock_irqsave(&lock, flags);
@@ -112,7 +112,7 @@ static int bcm2708_gpio_get(struct gpio_chip *gc, unsigned offset)
 	unsigned gpio_field_offset = (offset - 32*gpio_bank);
         unsigned lev;
 
-	if (offset >= ARCH_NR_GPIOS)
+	if (offset >= BCM_NR_GPIOS)
 		return 0;
         lev = readl(gpio->base + GPIOLEV(gpio_bank));
 //printk(KERN_ERR DRIVER_NAME ": bcm2708_gpio_get %p (%d)=%d\n", gc, offset, 0x1 & (lev>>gpio_field_offset));
@@ -125,7 +125,7 @@ static void bcm2708_gpio_set(struct gpio_chip *gc, unsigned offset, int value)
         unsigned gpio_bank = offset/32;
 	unsigned gpio_field_offset = (offset - 32*gpio_bank);
 //printk(KERN_ERR DRIVER_NAME ": bcm2708_gpio_set %p (%d=%d)\n", gc, offset, value);
-	if (offset >= ARCH_NR_GPIOS)
+	if (offset >= BCM_NR_GPIOS)
 		return;
 	if (value)
 	        writel(1<<gpio_field_offset, gpio->base + GPIOSET(gpio_bank));
@@ -169,7 +169,7 @@ static int bcm2708_irq_type(unsigned irq, unsigned trigger)
 	unsigned gpio_field_offset = (offset - 32*gpio_bank);
 	unsigned gpioren, gpiofen, gpiohen, gpiolen;
 
-	if (offset < 0 || offset >= ARCH_NR_GPIOS)
+	if (offset < 0 || offset >= BCM_NR_GPIOS)
 		return -EINVAL;
 
 	spin_lock_irqsave(&chip->irq_lock, flags);
@@ -226,14 +226,14 @@ static void bcm2708_irq_handler(unsigned irq, struct irq_desc *desc)
 		int offset;
 
 		chip = list_entry(ptr, struct bcm2708_gpio, list);
-		for (gpio_bank = 0; gpio_bank < ARCH_NR_GPIOS/32; gpio_bank++) {
+		for (gpio_bank = 0; gpio_bank < BCM_NR_GPIOS/32; gpio_bank++) {
 			pending = readl(chip->base + GPIOEDS(gpio_bank));
 			writel(pending, chip->base + GPIOEDS(gpio_bank));
 
 			if (pending == 0)
 				continue;
 
-			for_each_set_bit(offset, &pending, ARCH_NR_GPIOS)
+			for_each_set_bit(offset, &pending, BCM_NR_GPIOS)
 				generic_handle_irq(gpio_to_irq(offset+32*gpio_bank));
 		}
 	}
@@ -264,7 +264,7 @@ static int bcm2708_gpio_probe(struct platform_device *dev)
 
 	ucb->gc.label = "bcm2708_gpio";
 	ucb->gc.base = 0;
-	ucb->gc.ngpio = ARCH_NR_GPIOS;
+	ucb->gc.ngpio = BCM_NR_GPIOS;
 	ucb->gc.owner = THIS_MODULE;
 
 	ucb->gc.direction_input = bcm2708_gpio_dir_in;
