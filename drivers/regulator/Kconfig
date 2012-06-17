@@ -88,6 +88,15 @@ config REGULATOR_AAT2870
 	  If you have a AnalogicTech AAT2870 say Y to enable the
 	  regulator driver.
 
+config REGULATOR_BCM_VC
+	tristate "Broadcom VideoCore regulator"
+	depends on MACH_BCM2708
+	default y if MACH_BCM2708
+	help
+	  Support for VideoCore power management on Broadcom devices.
+
+	  Required to be able to turn power on for peripheral devices.
+
 config REGULATOR_DA903X
 	tristate "Dialog Semiconductor DA9030/DA9034 regulators"
 	depends on PMIC_DA903X

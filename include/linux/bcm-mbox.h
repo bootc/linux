@@ -10,6 +10,9 @@
 #ifndef _BCM_MBOX_H
 #define _BCM_MBOX_H
 
+#include <linux/device.h>
+#include <linux/types.h>
+
 struct bcm_mbox_chan;
 
 /*

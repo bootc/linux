@@ -52,5 +52,3 @@ obj-$(CONFIG_USB_SWITCH_FSA9480) += fsa9480.o
 obj-$(CONFIG_ALTERA_STAPL)	+=altera-stapl/
 obj-$(CONFIG_INTEL_MEI)		+= mei/
 obj-$(CONFIG_BCM_VC_MBOX)	+= bcm-mbox.o
-obj-$(CONFIG_BCM_VC_BELL)	+= bcm-bell.o
-obj-$(CONFIG_BCM_VC_POWER)	+= bcm-vc-power.o

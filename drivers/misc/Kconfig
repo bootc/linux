@@ -515,22 +515,6 @@ config BCM_VC_MBOX
 	help
 	  Support for VideoCore Mailbox access on Broadcom devices.
 
-config BCM_VC_BELL
-	tristate "Broadcom VideoCore Doorbell Support"
-	depends on OF
-	default y if MACH_BCM2708
-	help
-	  Support for VideoCore Doorbell access on Broadcom devices.
-
-config BCM_VC_POWER
-	tristate "Broadcom VideoCore Power Support"
-	depends on OF && BCM_VC_MBOX
-	default y if MACH_BCM2708
-	help
-	  Support for VideoCore Power management on Broadcom devices.
-	  
-	  Required to be able to turn power on for peripheral devices.
-
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"

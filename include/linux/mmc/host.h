@@ -283,6 +283,7 @@ struct mmc_host {
 	int			rescan_disable;	/* disable card detection */
 
 	struct mmc_card		*card;		/* device attached to this host */
+	int			card_fail_cnt;
 
 	wait_queue_head_t	wq;
 	struct task_struct	*claimer;	/* task that has host claimed */

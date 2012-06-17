@@ -88,14 +88,33 @@ static struct of_device_id sp804_match[] __initconst = {
 	{}
 };
 
+static void __init bcm2708_disable_sp804(struct device_node *node)
+{
+	struct resource res;
+	void __iomem *base;
+
+	if (of_address_to_resource(node, 0, &res))
+		return;
+
+	if (!request_mem_region(res.start, resource_size(&res), "sp804"))
+		return;
+
+	base = ioremap(res.start, resource_size(&res));
+	if (base) {
+		sp804_disable(base);
+		iounmap(base);
+	}
+
+	release_mem_region(res.start, resource_size(&res));
+}
+
 static void __init bcm2708_timer_init(void)
 {
 	struct device_node *node;
 
 	/* Disable the SP804 */
-	for_each_matching_node(node, sp804_match) {
-		sp804_disable(of_iomap(node, 0));
-	}
+	for_each_matching_node(node, sp804_match)
+		bcm2708_disable_sp804(node);
 
 	bcm2708_time_init();
 }

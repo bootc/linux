@@ -31,6 +31,41 @@
 		};
 	};
 
+	power: regulator {
+		compatible = "broadcom,bcm2835-power-mgr", "broadcom,bcm2708-power-mgr", "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		broadcom,vc-mailbox = <&vc_mbox>;
+		broadcom,vc-channel = <0>;
+
+		regulator-name = "VideoCore";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on = <1>;
+
+		sd_card_power: regulator@0 {
+			compatible = "broadcom,bcm2835-power-dev", "broadcom,bcm2708-power-dev";
+			reg = <0>;
+
+			vin-supply = <&power>;
+			regulator-name = "SD Card";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+		};
+
+		/* This is for the controller itself, not the root port */
+		usb_hcd_power: regulator@3 {
+			compatible = "broadcom,bcm2835-power-dev", "broadcom,bcm2708-power-dev";
+			reg = <3>;
+
+			vin-supply = <&power>;
+			regulator-name = "USB HCD";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+		};
+	};
+
 	axi {
 		uart0 {
 			pinctrl-names = "default";
@@ -58,7 +93,14 @@
 			clock-frequency = <100000>;
 		};
 
+
+		sdhci {
+			vmmc-supply = <&sd_card_power>;
+		};
+
 		usb {
+			hcd-supply = <&usb_hcd_power>;
+
 			hub {
 				compatible = "usb,hub", "usb,device";
 				port = <1>;

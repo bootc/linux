@@ -111,9 +111,21 @@ void __init bcm2708_time_init(void)
 		struct resource res;
 		void __iomem *base;
 		int irq;
+		u32 freq;
 
 		if (of_address_to_resource(node, 0, &res))
 			continue;
+
+		if (of_property_read_u32(node, "clock-frequency", &freq)) {
+			printk(KERN_ERR "bcm2708: unable to get timer frequency\n");
+			continue;
+		}
+
+		if (!request_mem_region(res.start, resource_size(&res),
+				node->full_name)) {
+			printk(KERN_ERR "bcm2708: unable to request timer IO\n");
+			continue;
+		}
 
 		base = ioremap(res.start, resource_size(&res));
 		if (!base) {
@@ -121,19 +133,13 @@ void __init bcm2708_time_init(void)
 			continue;
 		}
 
-		if (!request_region(res.start, resource_size(&res),
-				node->full_name)) {
-			printk(KERN_ERR "bcm2708: unable to request timer IO\n");
-			continue;
-		}
-
 		if (!found) {
 			system_clock = base + REG_COUNTER_LO;
-			setup_sched_clock(bcm2708_sched_read, 32, 1000000);
+			setup_sched_clock(bcm2708_sched_read, 32, freq);
 		}
 
 		clocksource_mmio_init(base + REG_COUNTER_LO, node->name,
-			1000000, 300, 32, clocksource_mmio_readl_up);
+			freq, 300, 32, clocksource_mmio_readl_up);
 
 		irq = irq_of_parse_and_map(node, DEFAULT_TIMER);
 		if (irq <= 0) {
@@ -165,7 +171,7 @@ void __init bcm2708_time_init(void)
 			continue;
 		}
 
-		clockevents_config_and_register(&timer->evt, 1000000, 0xf, 0xffffffff);
+		clockevents_config_and_register(&timer->evt, freq, 0xf, 0xffffffff);
 
 		printk(KERN_INFO "bcm2708: system timer at MMIO %#lx (irq = %d)\n",
 			(unsigned long)res.start, irq);

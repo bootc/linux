@@ -209,6 +209,7 @@ enum dma_ctrl_flags {
  * command.
  * @FSLDMA_EXTERNAL_START: this command will put the Freescale DMA controller
  * into external start mode.
+ * @BCM2708DMA_CONFIG: configure channel parameters
  */
 enum dma_ctrl_cmd {
 	DMA_TERMINATE_ALL,
@@ -216,6 +217,7 @@ enum dma_ctrl_cmd {
 	DMA_RESUME,
 	DMA_SLAVE_CONFIG,
 	FSLDMA_EXTERNAL_START,
+	BCM2708DMA_CONFIG,
 };
 
 /**

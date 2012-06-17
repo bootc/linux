@@ -260,6 +260,13 @@ config DMA_SA11X0
 	  SA-1110 SoCs.  This DMA engine can only be used with on-chip
 	  devices.
 
+config DMA_BCM2708
+	tristate "BCM2708 DMA support"
+	depends on ARCH_BCM2708
+	select DMA_ENGINE
+	help
+	  Enable support for the BCM2708 DMA controller.
+
 config DMA_ENGINE
 	bool
 

@@ -27,6 +27,7 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/gpio.h>
+#include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/irqdesc.h>
 #include <linux/irqdomain.h>
@@ -81,7 +82,7 @@ struct bcm2708_pinctrl {
 
 	unsigned long readonly_map[BCM2708_PIN_BITMAP_SZ];
 	/* note: locking assumes each bank will have its own unsigned long */
-	unsigned long masked_irq_map[BCM2708_PIN_BITMAP_SZ];
+	unsigned long enabled_irq_map[BCM2708_PIN_BITMAP_SZ];
 	unsigned int irq_type[BCM2708_NUM_GPIOS];
 
 	struct pinctrl_dev *pctl_dev;
@@ -399,25 +400,39 @@ static struct gpio_chip bcm2708_gpio_chip __devinitconst = {
 	.can_sleep = 0,
 };
 
-static void bcm2708_gpio_irq_handler(unsigned int irq, struct irq_desc *desc)
+static irqreturn_t bcm2708_gpio_irq_handler(int irq, void *dev_id)
 {
-	struct bcm2708_gpio_irqdata *irqdata = irq_desc_get_handler_data(desc);
+	struct bcm2708_gpio_irqdata *irqdata = dev_id;
 	struct bcm2708_pinctrl *pc = irqdata->pc;
 	int bank = irqdata->bank;
 	unsigned long events;
 	unsigned offset;
+	unsigned gpio;
+	unsigned int type;
+	bool enabled;
 
 	events = bcm2708_gpio_rd(pc, GPEDS0 + bank * 4);
 	for_each_set_bit(offset, &events, 32) {
-		irq = irq_linear_revmap(pc->irq_domain, (32 * bank) + offset);
-		generic_handle_irq(irq);
-	}
-}
+		gpio = (32 * bank) + offset;
 
-static void bcm2708_gpio_irq_ack(struct irq_data *data)
-{
-	struct bcm2708_pinctrl *pc = irq_data_get_irq_chip_data(data);
-	bcm2708_gpio_set_bit(pc, GPEDS0, irqd_to_hwirq(data));
+		spin_lock(&pc->irq_lock[bank]);
+		enabled = test_bit(offset, pc->enabled_irq_map);
+		type = pc->irq_type[gpio];
+		spin_unlock(&pc->irq_lock[bank]);
+
+		/* ack edge triggered IRQs immediately */
+		if (!(type & IRQ_TYPE_LEVEL_MASK))
+			bcm2708_gpio_set_bit(pc, GPEDS0, gpio);
+
+		if (enabled)
+			generic_handle_irq(
+				irq_linear_revmap(pc->irq_domain, gpio));
+
+		/* ack level triggered IRQ after handling them */
+		if (type & IRQ_TYPE_LEVEL_MASK)
+			bcm2708_gpio_set_bit(pc, GPEDS0, gpio);
+	}
+	return events ? IRQ_HANDLED : IRQ_NONE;
 }
 
 static inline void __bcm2708_gpio_irq_config(struct bcm2708_pinctrl *pc,
@@ -460,7 +475,7 @@ static void bcm2708_gpio_irq_config(struct bcm2708_pinctrl *pc,
 	}
 }
 
-static inline void __bcm2708_gpio_irq_mask(struct irq_data *data, bool ack)
+static void bcm2708_gpio_irq_enable(struct irq_data *data)
 {
 	struct bcm2708_pinctrl *pc = irq_data_get_irq_chip_data(data);
 	unsigned offset = irqd_to_hwirq(data);
@@ -468,39 +483,25 @@ static inline void __bcm2708_gpio_irq_mask(struct irq_data *data, bool ack)
 	unsigned long flags;
 
 	spin_lock_irqsave(&pc->irq_lock[bank], flags);
-	set_bit(offset, pc->masked_irq_map);
-	bcm2708_gpio_irq_config(pc, offset, false);
-
-	if (ack)
-		bcm2708_gpio_set_bit(pc, GPEDS0, offset);
-
-	spin_unlock_irqrestore(&pc->irq_lock[bank], flags);
-}
-
-static void bcm2708_gpio_irq_mask(struct irq_data *data)
-{
-	__bcm2708_gpio_irq_mask(data, false);
-}
-
-static void bcm2708_gpio_irq_mask_ack(struct irq_data *data)
-{
-	__bcm2708_gpio_irq_mask(data, true);
-}
-
-static void bcm2708_gpio_irq_unmask(struct irq_data *data)
-{
-	struct bcm2708_pinctrl *pc = irq_data_get_irq_chip_data(data);
-	unsigned offset = irqd_to_hwirq(data);
-	unsigned bank = GPIO_REG_OFFSET(offset);
-	unsigned long flags;
-
-	spin_lock_irqsave(&pc->irq_lock[bank], flags);
-	clear_bit(offset, pc->masked_irq_map);
+	set_bit(offset, pc->enabled_irq_map);
 	bcm2708_gpio_irq_config(pc, offset, true);
 	spin_unlock_irqrestore(&pc->irq_lock[bank], flags);
 }
 
-static int __bcm2708_gpio_irq_set_type_masked(struct bcm2708_pinctrl *pc,
+static void bcm2708_gpio_irq_disable(struct irq_data *data)
+{
+	struct bcm2708_pinctrl *pc = irq_data_get_irq_chip_data(data);
+	unsigned offset = irqd_to_hwirq(data);
+	unsigned bank = GPIO_REG_OFFSET(offset);
+	unsigned long flags;
+
+	spin_lock_irqsave(&pc->irq_lock[bank], flags);
+	bcm2708_gpio_irq_config(pc, offset, false);
+	clear_bit(offset, pc->enabled_irq_map);
+	spin_unlock_irqrestore(&pc->irq_lock[bank], flags);
+}
+
+static int __bcm2708_gpio_irq_set_type_disabled(struct bcm2708_pinctrl *pc,
 	unsigned offset, unsigned int type)
 {
 	switch (type) {
@@ -520,7 +521,7 @@ static int __bcm2708_gpio_irq_set_type_masked(struct bcm2708_pinctrl *pc,
 }
 
 /* slower path for reconfiguring IRQ type */
-static int __bcm2708_gpio_irq_set_type_unmasked(struct bcm2708_pinctrl *pc,
+static int __bcm2708_gpio_irq_set_type_enabled(struct bcm2708_pinctrl *pc,
 	unsigned offset, unsigned int type)
 {
 	switch (type) {
@@ -600,10 +601,10 @@ static int bcm2708_gpio_irq_set_type(struct irq_data *data, unsigned int type)
 
 	spin_lock_irqsave(&pc->irq_lock[bank], flags);
 
-	if (test_bit(offset, pc->masked_irq_map))
-		ret = __bcm2708_gpio_irq_set_type_masked(pc, offset, type);
+	if (test_bit(offset, pc->enabled_irq_map))
+		ret = __bcm2708_gpio_irq_set_type_enabled(pc, offset, type);
 	else
-		ret = __bcm2708_gpio_irq_set_type_unmasked(pc, offset, type);
+		ret = __bcm2708_gpio_irq_set_type_disabled(pc, offset, type);
 
 	spin_unlock_irqrestore(&pc->irq_lock[bank], flags);
 
@@ -612,10 +613,8 @@ static int bcm2708_gpio_irq_set_type(struct irq_data *data, unsigned int type)
 
 static struct irq_chip bcm2708_gpio_irq_chip = {
 	.name = "GPIO-event",
-	.irq_ack = bcm2708_gpio_irq_ack,
-	.irq_mask = bcm2708_gpio_irq_mask,
-	.irq_mask_ack = bcm2708_gpio_irq_mask_ack,
-	.irq_unmask = bcm2708_gpio_irq_unmask,
+	.irq_enable = bcm2708_gpio_irq_enable,
+	.irq_disable = bcm2708_gpio_irq_disable,
 	.irq_set_type = bcm2708_gpio_irq_set_type,
 };
 
@@ -986,10 +985,9 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 
 	for (i = 0; i < BCM2708_NUM_GPIOS; i++) {
 		int irq = irq_create_mapping(pc->irq_domain, i);
-		set_bit(i, pc->masked_irq_map);
 		irq_set_lockdep_class(irq, &gpio_lock_class);
 		irq_set_chip_and_handler(irq, &bcm2708_gpio_irq_chip,
-				handle_level_irq);
+				handle_simple_irq);
 		irq_set_chip_data(irq, pc);
 		set_irq_flags(irq, IRQF_VALID);
 	}
@@ -997,6 +995,8 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 	for (i = 0; i < BCM2708_NUM_BANKS; i++) {
 		unsigned long events;
 		unsigned offset;
+		int len;
+		char *name;
 
 		/* clear event detection flags */
 		bcm2708_gpio_wr(pc, GPREN0 + i * 4, 0);
@@ -1016,8 +1016,19 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 		pc->irq_data[i].bank = i;
 		spin_lock_init(&pc->irq_lock[i]);
 
-		irq_set_chained_handler(pc->irq[i], bcm2708_gpio_irq_handler);
-		irq_set_handler_data(pc->irq[i], &pc->irq_data[i]);
+		len = strlen(dev_name(pc->dev)) + 16;
+		name = devm_kzalloc(pc->dev, len, GFP_KERNEL);
+		if (!name)
+			continue;
+		snprintf(name, len, "%s:bank%d", dev_name(pc->dev), i);
+
+		err = devm_request_irq(dev, pc->irq[i],
+			bcm2708_gpio_irq_handler, IRQF_SHARED,
+			name, &pc->irq_data[i]);
+		if (err) {
+			dev_err(dev, "unable to request IRQ %d\n", pc->irq[i]);
+			return err;
+		}
 	}
 
 	err = gpiochip_add(&pc->gpio_chip);
@@ -1036,17 +1047,25 @@ static int __devinit bcm2708_pinctrl_probe(struct platform_device *pdev)
 	pinctrl_add_gpio_range(pc->pctl_dev, &pc->gpio_range);
 
 	platform_set_drvdata(pdev, pc);
-
 	return 0;
 }
 
 static int __devexit bcm2708_pinctrl_remove(struct platform_device *pdev)
 {
 	struct bcm2708_pinctrl *pc = platform_get_drvdata(pdev);
+	int ret;
 
-	pinctrl_remove_gpio_range(pc->pctl_dev, &pc->gpio_range);
-	pinctrl_unregister(pc->pctl_dev);
+	if (pc->pctl_dev) {
+		pinctrl_remove_gpio_range(pc->pctl_dev, &pc->gpio_range);
+		pinctrl_unregister(pc->pctl_dev);
+		pc->pctl_dev = NULL;
+	}
 
+	ret = gpiochip_remove(&pc->gpio_chip);
+	if (ret)
+		return ret;
+
+	platform_set_drvdata(pdev, NULL);
 	return 0;
 }
 

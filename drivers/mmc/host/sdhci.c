@@ -27,6 +27,7 @@
 
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/host.h>
+#include <linux/mmc/sd.h>
 
 #include "sdhci.h"
 
@@ -299,7 +300,7 @@ static void sdhci_read_block_pio(struct sdhci_host *host)
 	u32 uninitialized_var(scratch);
 	u8 *buf;
 
-	DBG("PIO reading\n");
+	DBG("PIO reading %db\n", host->data->blksz);
 
 	blksize = host->data->blksz;
 	chunk = 0;
@@ -344,7 +345,7 @@ static void sdhci_write_block_pio(struct sdhci_host *host)
 	u32 scratch;
 	u8 *buf;
 
-	DBG("PIO writing\n");
+	DBG("PIO writing %db\n", host->data->blksz);
 
 	blksize = host->data->blksz;
 	chunk = 0;
@@ -383,9 +384,10 @@ static void sdhci_write_block_pio(struct sdhci_host *host)
 	local_irq_restore(flags);
 }
 
-static void sdhci_transfer_pio(struct sdhci_host *host)
+static void sdhci_transfer_pio(struct sdhci_host *host, u32 intmask)
 {
 	u32 mask;
+	u32 avail;
 
 	BUG_ON(!host->data);
 
@@ -406,7 +408,16 @@ static void sdhci_transfer_pio(struct sdhci_host *host)
 		(host->data->blocks == 1))
 		mask = ~0;
 
-	while (sdhci_readl(host, SDHCI_PRESENT_STATE) & mask) {
+	if (host->quirks & SDHCI_QUIRK2_START_PIO_FROM_INT) {
+		if (host->data->flags & MMC_DATA_READ)
+			avail = intmask & SDHCI_INT_DATA_AVAIL;
+		else
+			avail = intmask & SDHCI_INT_SPACE_AVAIL;
+	} else {
+		avail = sdhci_readl(host, SDHCI_PRESENT_STATE) & mask;
+	}
+
+	while (avail) {
 		if (host->quirks & SDHCI_QUIRK_PIO_NEEDS_DELAY)
 			udelay(100);
 
@@ -418,9 +429,112 @@ static void sdhci_transfer_pio(struct sdhci_host *host)
 		host->blocks--;
 		if (host->blocks == 0)
 			break;
+
+		avail = sdhci_readl(host, SDHCI_PRESENT_STATE) & mask;
 	}
 
-	DBG("PIO transfer complete.\n");
+	if (host->blocks)
+		DBG("PIO transfer %db remaining\n", host->blocks);
+	else
+		DBG("PIO transfer complete\n");
+}
+
+static void sdhci_data_end(struct sdhci_host *host)
+{
+	if (host->cmd) {
+		/*
+		 * Data managed to finish before the
+		 * command completed. Make sure we do
+		 * things in the proper order.
+		 */
+		host->data_early = 1;
+	} else {
+		sdhci_finish_data(host);
+	}
+}
+
+static void sdhci_slave_dma_data_end(struct sdhci_host *host)
+{
+	DBG("sl_status = %d, sl_ack = %d\n", host->sl_status, host->sl_ack);
+
+	if (host->sl_status != DMA_IN_PROGRESS && host->sl_ack) {
+		WARN(host->sl_ack > 1, "multiple acks (%d)\n", host->sl_ack);
+		if (host->data)
+			sdhci_data_end(host);
+	}
+}
+
+static void sdhci_finish_slave_dma(void *param)
+{
+	struct sdhci_host *host = (struct sdhci_host *)param;
+	unsigned long flags;
+
+	spin_lock_irqsave(&host->lock, flags);
+	host->sl_status = dma_async_is_tx_complete(host->sl_chan,
+		host->sl_cookie, NULL, NULL);
+
+	if (host->sl_status != DMA_SUCCESS) {
+		host->sl_status = DMA_ERROR;
+		if (host->data)
+			host->data->error = -EIO;
+	}
+
+	sdhci_slave_dma_data_end(host);
+	spin_unlock_irqrestore(&host->lock, flags);
+}
+
+static int sdhci_prepare_slave_dma(struct sdhci_host *host)
+{
+	enum dma_transfer_direction dir = DMA_TRANS_NONE;
+
+	BUG_ON(!host->data);
+
+	if (host->data->flags & MMC_DATA_READ)
+		dir = DMA_DEV_TO_MEM;
+	else
+		dir = DMA_MEM_TO_DEV;
+
+	BUG_ON(dir == DMA_TRANS_NONE);
+
+	host->sl_txd = dmaengine_prep_slave_sg(host->sl_chan,
+			host->data->sg, host->data->sg_len, dir,
+			DMA_PREP_INTERRUPT
+				| DMA_CTRL_ACK
+				| DMA_COMPL_SKIP_DEST_UNMAP
+				| DMA_COMPL_SKIP_SRC_UNMAP);
+	if (!host->sl_txd)
+		return -EINVAL;
+
+	host->sl_txd->callback = sdhci_finish_slave_dma;
+	host->sl_txd->callback_param = host;
+	host->sl_status = DMA_PAUSED;
+	host->sl_ack = 0;
+	return 0;
+}
+
+static int sdhci_transfer_slave_dma(struct sdhci_host *host)
+{
+	BUG_ON(!host->sl_txd);
+
+	sdhci_mask_irqs(host, SDHCI_INT_DATA_AVAIL | SDHCI_INT_SPACE_AVAIL);
+	host->sl_cookie = dmaengine_submit(host->sl_txd);
+	host->sl_txd = NULL;
+
+	if (!dma_submit_error(host->sl_cookie)) {
+		DBG("DMA transfer of %db submitted\n",
+			host->data->blocks);
+		host->sl_status = DMA_IN_PROGRESS;
+		dma_async_issue_pending(host->sl_chan);
+		return 0;
+	} else {
+		DBG("DMA error submitting %db for transfer\n",
+			host->data->blocks);
+		host->sl_status = DMA_ERROR;
+		dmaengine_terminate_all(host->sl_chan);
+		sdhci_unmask_irqs(host,
+				SDHCI_INT_DATA_AVAIL | SDHCI_INT_SPACE_AVAIL);
+		return -EIO;
+	}
 }
 
 static char *sdhci_kmap_atomic(struct scatterlist *sg, unsigned long *flags)
@@ -693,7 +807,8 @@ static void sdhci_set_transfer_irqs(struct sdhci_host *host)
 	u32 pio_irqs = SDHCI_INT_DATA_AVAIL | SDHCI_INT_SPACE_AVAIL;
 	u32 dma_irqs = SDHCI_INT_DMA_END | SDHCI_INT_ADMA_ERROR;
 
-	if (host->flags & SDHCI_REQ_USE_DMA)
+	if ((host->flags & SDHCI_REQ_USE_DMA)
+			&& !(host->flags & SDHCI_USE_SLAVE_DMA))
 		sdhci_clear_set_irqs(host, pio_irqs, dma_irqs);
 	else
 		sdhci_clear_set_irqs(host, dma_irqs, pio_irqs);
@@ -725,7 +840,8 @@ static void sdhci_prepare_data(struct sdhci_host *host, struct mmc_command *cmd)
 	host->data_early = 0;
 	host->data->bytes_xfered = 0;
 
-	if (host->flags & (SDHCI_USE_SDMA | SDHCI_USE_ADMA))
+	if (host->flags & (SDHCI_USE_SDMA | SDHCI_USE_ADMA
+						| SDHCI_USE_SLAVE_DMA))
 		host->flags |= SDHCI_REQ_USE_DMA;
 
 	/*
@@ -821,6 +937,14 @@ static void sdhci_prepare_data(struct sdhci_host *host, struct mmc_command *cmd)
 				 */
 				WARN_ON(1);
 				host->flags &= ~SDHCI_REQ_USE_DMA;
+			} else if (host->flags & SDHCI_USE_SLAVE_DMA) {
+				ret = sdhci_prepare_slave_dma(host);
+				if (ret) {
+					host->flags &= ~SDHCI_REQ_USE_DMA;
+				} else {
+					DBG("prepared %d DMA transfers\n",
+						sg_cnt);
+				}
 			} else {
 				WARN_ON(sg_cnt != 1);
 				sdhci_writel(host, sg_dma_address(data->sg),
@@ -893,7 +1017,8 @@ static void sdhci_set_transfer_mode(struct sdhci_host *host,
 
 	if (data->flags & MMC_DATA_READ)
 		mode |= SDHCI_TRNS_READ;
-	if (host->flags & SDHCI_REQ_USE_DMA)
+	if ((host->flags & SDHCI_REQ_USE_DMA)
+			&& !(host->flags & SDHCI_USE_SLAVE_DMA))
 		mode |= SDHCI_TRNS_DMA;
 
 	sdhci_writew(host, mode, SDHCI_TRANSFER_MODE);
@@ -909,6 +1034,12 @@ static void sdhci_finish_data(struct sdhci_host *host)
 	host->data = NULL;
 
 	if (host->flags & SDHCI_REQ_USE_DMA) {
+		if (host->flags & SDHCI_USE_SLAVE_DMA) {
+			if (host->sl_status != DMA_SUCCESS)
+				dmaengine_terminate_all(host->sl_chan);
+			host->sl_txd = NULL;
+		}
+
 		if (host->flags & SDHCI_USE_ADMA)
 			sdhci_adma_table_post(host, data);
 		else {
@@ -949,8 +1080,9 @@ static void sdhci_finish_data(struct sdhci_host *host)
 		}
 
 		sdhci_send_command(host, data->stop);
-	} else
+	} else {
 		tasklet_schedule(&host->finish_tasklet);
+	}
 }
 
 static void sdhci_send_command(struct sdhci_host *host, struct mmc_command *cmd)
@@ -1986,6 +2118,7 @@ static void sdhci_tasklet_finish(unsigned long param)
          * be run again afterwards but without any active request.
          */
 	if (!host->mrq) {
+		DBG("sdhci_tasklet_finish no mrq\n");
 		spin_unlock_irqrestore(&host->lock, flags);
 		return;
 	}
@@ -2050,6 +2183,9 @@ static void sdhci_timeout_timer(unsigned long data)
 		sdhci_dumpregs(host);
 
 		if (host->data) {
+			if (host->flags & SDHCI_USE_SLAVE_DMA)
+				dmaengine_terminate_all(host->sl_chan);
+
 			host->data->error = -ETIMEDOUT;
 			sdhci_finish_data(host);
 		} else {
@@ -2164,6 +2300,7 @@ static void sdhci_show_adma_error(struct sdhci_host *host)
 static void sdhci_show_adma_error(struct sdhci_host *host) { }
 #endif
 
+
 static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 {
 	u32 command;
@@ -2203,8 +2340,9 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 
 	if (intmask & SDHCI_INT_DATA_TIMEOUT)
 		host->data->error = -ETIMEDOUT;
-	else if (intmask & SDHCI_INT_DATA_END_BIT)
+	else if (intmask & SDHCI_INT_DATA_END_BIT) {
 		host->data->error = -EILSEQ;
+	}
 	else if ((intmask & SDHCI_INT_DATA_CRC) &&
 		SDHCI_GET_CMD(sdhci_readw(host, SDHCI_COMMAND))
 			!= MMC_BUS_TEST_R)
@@ -2218,8 +2356,15 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 	if (host->data->error)
 		sdhci_finish_data(host);
 	else {
-		if (intmask & (SDHCI_INT_DATA_AVAIL | SDHCI_INT_SPACE_AVAIL))
-			sdhci_transfer_pio(host);
+		if (intmask & (SDHCI_INT_DATA_AVAIL | SDHCI_INT_SPACE_AVAIL)) {
+			if (host->flags & SDHCI_USE_SLAVE_DMA) {
+				if (sdhci_transfer_slave_dma(host)) {
+					host->flags &= ~SDHCI_REQ_USE_DMA;
+					sdhci_transfer_pio(host, intmask);
+				}
+			} else
+				sdhci_transfer_pio(host, intmask);
+		}
 
 		/*
 		 * We currently don't do anything fancy with DMA
@@ -2249,15 +2394,12 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 		}
 
 		if (intmask & SDHCI_INT_DATA_END) {
-			if (host->cmd) {
-				/*
-				 * Data managed to finish before the
-				 * command completed. Make sure we do
-				 * things in the proper order.
-				 */
-				host->data_early = 1;
+			if ((host->flags & SDHCI_USE_SLAVE_DMA)
+					&& (host->flags & SDHCI_REQ_USE_DMA)) {
+				host->sl_ack++;
+				sdhci_slave_dma_data_end(host);
 			} else {
-				sdhci_finish_data(host);
+				sdhci_data_end(host);
 			}
 		}
 	}
@@ -2269,8 +2411,12 @@ static irqreturn_t sdhci_irq(int irq, void *dev_id)
 	struct sdhci_host *host = dev_id;
 	u32 intmask, unexpected = 0;
 	int cardint = 0, max_loops = 16;
+	unsigned long flags = 0;
 
-	spin_lock(&host->lock);
+	if (host->flags & SDHCI_USE_SLAVE_DMA)
+		spin_lock_irqsave(&host->lock, flags);
+	else
+		spin_lock(&host->lock);
 
 	if (host->runtime_suspended) {
 		spin_unlock(&host->lock);
@@ -2355,7 +2501,10 @@ again:
 	if (intmask && --max_loops)
 		goto again;
 out:
-	spin_unlock(&host->lock);
+	if (host->flags & SDHCI_USE_SLAVE_DMA)
+		spin_unlock_irqrestore(&host->lock, flags);
+	else
+		spin_unlock(&host->lock);
 
 	if (unexpected) {
 		pr_err("%s: Unexpected interrupt 0x%08x.\n",
@@ -2649,6 +2798,17 @@ int sdhci_add_host(struct sdhci_host *host)
 				host->flags &=
 					~(SDHCI_USE_SDMA | SDHCI_USE_ADMA);
 			}
+		} else if (host->ops->enable_slave_dma) {
+			host->sl_chan = host->ops->enable_slave_dma(host);
+
+			if (host->sl_chan) {
+				host->flags |= SDHCI_USE_SLAVE_DMA;
+			} else {
+				pr_warning("%s: No slave DMA available. "
+					"Falling back to PIO.\n",
+					mmc_hostname(mmc));
+			}
+			host->flags &= ~(SDHCI_USE_SDMA | SDHCI_USE_ADMA);
 		}
 	}
 
@@ -2675,7 +2835,8 @@ int sdhci_add_host(struct sdhci_host *host)
 	 * mask, but PIO does not need the hw shim so we set a new
 	 * mask here in that case.
 	 */
-	if (!(host->flags & (SDHCI_USE_SDMA | SDHCI_USE_ADMA))) {
+	if (!(host->flags & (SDHCI_USE_SDMA | SDHCI_USE_ADMA
+					| SDHCI_USE_SLAVE_DMA))) {
 		host->dma_mask = DMA_BIT_MASK(64);
 		mmc_dev(host->mmc)->dma_mask = &host->dma_mask;
 	}
@@ -2758,6 +2919,7 @@ int sdhci_add_host(struct sdhci_host *host)
 	/* Auto-CMD23 stuff only works in ADMA or PIO. */
 	if ((host->version >= SDHCI_SPEC_300) &&
 	    ((host->flags & SDHCI_USE_ADMA) ||
+	     (host->flags & SDHCI_USE_SLAVE_DMA) ||
 	     !(host->flags & SDHCI_USE_SDMA))) {
 		host->flags |= SDHCI_AUTO_CMD23;
 		DBG("%s: Auto-CMD23 available\n", mmc_hostname(mmc));
@@ -2896,6 +3058,21 @@ int sdhci_add_host(struct sdhci_host *host)
 			mmc->caps |= MMC_CAP_MAX_CURRENT_200;
 	}
 
+	host->vmmc = regulator_get(mmc_dev(mmc), "vmmc");
+	if (IS_ERR(host->vmmc)) {
+		pr_info("%s: no vmmc regulator found\n", mmc_hostname(mmc));
+		host->vmmc = NULL;
+	}
+
+#ifdef CONFIG_REGULATOR
+	if (mmc->ocr_avail == 0 && host->vmmc
+			&& (host->quirks2 & SDHCI_QUIRK2_OCR_FROM_REGULATOR)) {
+		ocr_avail = mmc_regulator_get_ocrmask(host->vmmc);
+		if (ocr_avail < 0)
+			ocr_avail = 0;
+	}
+#endif
+
 	mmc->ocr_avail = ocr_avail;
 	mmc->ocr_avail_sdio = ocr_avail;
 	if (host->ocr_avail_sdio)
@@ -2925,7 +3102,7 @@ int sdhci_add_host(struct sdhci_host *host)
 		mmc->max_segs = 128;
 	else if (host->flags & SDHCI_USE_SDMA)
 		mmc->max_segs = 1;
-	else /* PIO */
+	else /* PIO or slave DMA */
 		mmc->max_segs = 128;
 
 	/*
@@ -2995,12 +3172,6 @@ int sdhci_add_host(struct sdhci_host *host)
 	if (ret)
 		goto untasklet;
 
-	host->vmmc = regulator_get(mmc_dev(mmc), "vmmc");
-	if (IS_ERR(host->vmmc)) {
-		pr_info("%s: no vmmc regulator found\n", mmc_hostname(mmc));
-		host->vmmc = NULL;
-	}
-
 	sdhci_init(host, 0);
 
 #ifdef CONFIG_MMC_DEBUG
@@ -3026,6 +3197,7 @@ int sdhci_add_host(struct sdhci_host *host)
 
 	pr_info("%s: SDHCI controller on %s [%s] using %s\n",
 		mmc_hostname(mmc), host->hw_name, dev_name(mmc_dev(mmc)),
+		(host->flags & SDHCI_USE_SLAVE_DMA) ? "slave DMA" :
 		(host->flags & SDHCI_USE_ADMA) ? "ADMA" :
 		(host->flags & SDHCI_USE_SDMA) ? "DMA" : "PIO");
 
@@ -3041,6 +3213,9 @@ reset:
 untasklet:
 	tasklet_kill(&host->card_tasklet);
 	tasklet_kill(&host->finish_tasklet);
+
+	if (host->sl_chan)
+		dma_release_channel(host->sl_chan);
 
 	return ret;
 }

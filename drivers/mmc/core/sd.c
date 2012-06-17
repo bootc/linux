@@ -25,6 +25,8 @@
 #include "sd.h"
 #include "sd_ops.h"
 
+#define MAX_HS_INIT_FAILURES 2
+
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
 	0,		0,		0,		0
@@ -379,6 +381,12 @@ int mmc_sd_switch_hs(struct mmc_card *card)
 
 	if (card->sw_caps.hs_max_dtr == 0)
 		return 0;
+
+	if (card->host->card_fail_cnt > MAX_HS_INIT_FAILURES) {
+		pr_info("%s: card init has failed %d times, no longer trying high speed mode\n",
+			mmc_hostname(card->host), card->host->card_fail_cnt);
+		return 0;
+	}
 
 	err = -EIO;
 
@@ -1062,6 +1070,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 
 	if (err) {
 		mmc_sd_remove(host);
+		host->card_fail_cnt = 0;
 
 		mmc_claim_host(host);
 		mmc_detach_bus(host);
@@ -1112,6 +1121,7 @@ static int mmc_sd_power_restore(struct mmc_host *host)
 	int ret;
 
 	host->card->state &= ~MMC_STATE_HIGHSPEED;
+	host->card_fail_cnt = 0;
 	mmc_claim_host(host);
 	ret = mmc_sd_init_card(host, host->ocr, host->card);
 	mmc_release_host(host);
@@ -1237,8 +1247,9 @@ remove_card:
 err:
 	mmc_detach_bus(host);
 
-	pr_err("%s: error %d whilst initialising SD card\n",
-		mmc_hostname(host), err);
+	pr_err("%s: error %d whilst initialising SD card at %uHz\n",
+		mmc_hostname(host), err, host->ios.clock);
+	host->card_fail_cnt++;
 
 	return err;
 }

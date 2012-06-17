@@ -118,6 +118,21 @@ config MMC_SDHCI_OF_HLWD
 
 	  If unsure, say N.
 
+config MMC_SDHCI_OF_BCM2708
+	tristate "Broadcom BCM2708 SDHCI support"
+	depends on MMC_SDHCI_PLTFM && ARCH_BCM2708 && REGULATOR
+	select MMC_SDHCI_IO_ACCESSORS
+	help
+	  This supports the Arasan SDHCI controller on the BCM2708
+	  often referrered to as the eMMC block.
+
+config MMC_SDHCI_OF_BCM2708_DMA
+	bool "DMA support on BCM2708 SDHCI"
+	depends on MMC_SDHCI_OF_BCM2708 && DMA_BCM2708
+	default y
+	help
+	  Enable DMA support. This can be disabled with a module parameter.
+
 config MMC_SDHCI_CNS3XXX
 	tristate "SDHCI support on the Cavium Networks CNS3xxx SoC"
 	depends on ARCH_CNS3XXX

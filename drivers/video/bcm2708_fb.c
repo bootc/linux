@@ -14,6 +14,8 @@
  * Copyright 1999-2001 Jeff Garzik <jgarzik@pobox.com>
  *
  */
+
+#include <linux/bcm-mbox.h>
 #include <linux/console.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
@@ -26,8 +28,6 @@
 #include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-
-#include "../misc/bcm-mbox.h"
 
 /* This is limited to 16 characters when displayed by X startup */
 static const char *bcm2708_name = "BCM2708 FB";
@@ -217,13 +217,21 @@ static int bcm2708_fb_set_par(struct fb_info *info)
 	bcm_mbox_clear(fb->mbox);
 	ret = bcm_mbox_call_timeout(fb->mbox, fb->dma, &val, 2 * HZ);
 	if (ret)
-		dev_err(fb->dev, "error communicating with VideoCore (%d)", ret);
+		dev_err(fb->dev, "error communicating with VideoCore (%d)",
+				ret);
 
 	/* ensure GPU writes are visible to us */
 	rmb();
 
-	if (ret != 0 || val != 0)
-		return -EIO;
+	if (ret != 0 || val != 0) {
+		/* the console may currently be locked */
+		console_trylock();
+		console_unlock();
+
+		/* fbcon_init can't handle errors */
+		panic(DRIVER_NAME ": VideoCore fatal error ret=%d val=%d\n",
+				ret, val);
+	}
 
 	fb->fb.fix.line_length = fbinfo->pitch;
 
@@ -232,19 +240,36 @@ static int bcm2708_fb_set_par(struct fb_info *info)
 	else
 		fb->fb.fix.visual = FB_VISUAL_TRUECOLOR;
 
+	if (fb->fb.screen_base) {
+		iounmap(fb->fb.screen_base);
+		release_mem_region(fb->fb.fix.smem_start,
+				fb->fb.fix.smem_len);
+	}
+
 	fb->fb.fix.smem_start = fbinfo->base;
 	fb->fb.fix.smem_len = fbinfo->pitch * fbinfo->yres_virtual;
+	if (!request_mem_region(fb->fb.fix.smem_start, fb->fb.fix.smem_len,
+			dev_name(fb->dev))) {
+		/* the console may currently be locked */
+		console_trylock();
+		console_unlock();
+
+		/* fbcon_init can't handle errors */
+		panic(DRIVER_NAME ": request_region failed for 0x%08lx+0x%08x\n",
+				fb->fb.fix.smem_start, fb->fb.fix.smem_len);
+	}
+
 	fb->fb.screen_size = fbinfo->screen_size;
-	if (fb->fb.screen_base)
-		iounmap(fb->fb.screen_base);
-	fb->fb.screen_base = ioremap_wc(fb->fb.fix.smem_start, fb->fb.screen_size);
+	fb->fb.screen_base = ioremap_wc(fb->fb.fix.smem_start,
+			fb->fb.screen_size);
 	if (!fb->fb.screen_base) {
 		/* the console may currently be locked */
 		console_trylock();
 		console_unlock();
 
-		/* what else can we do here? */
-		BUG();
+		/* fbcon_init can't handle errors */
+		panic(DRIVER_NAME ": ioremap_wc failed at 0x%08lx+0x%08lx\n",
+				fb->fb.fix.smem_start, fb->fb.screen_size);
 	}
 	return 0;
 }
@@ -290,17 +315,14 @@ static struct fb_ops bcm2708_fb_ops = {
 static int bcm2708_fb_register(struct bcm2708_fb *fb)
 {
 	int ret;
-	dma_addr_t dma;
-	void *mem = dma_alloc_coherent(fb->dev, PAGE_ALIGN(sizeof(*fb->info)), &dma,
-			       GFP_KERNEL);
 
-	if (!mem) {
+	fb->info = dmam_alloc_coherent(fb->dev, PAGE_ALIGN(sizeof(*fb->info)),
+		&fb->dma, GFP_KERNEL);
+	if (!fb->info) {
 		dev_err(fb->dev, "unable to allocate fbinfo buffer\n");
-		ret = -ENOMEM;
-	} else {
-		fb->info = (struct fbinfo_s *)mem;
-		fb->dma = dma;
+		return -ENOMEM;
 	}
+
 	fb->fb.fbops = &bcm2708_fb_ops;
 	fb->fb.flags = FBINFO_FLAG_DEFAULT;
 	fb->fb.pseudo_palette = fb->cmap;
@@ -357,7 +379,9 @@ static void bcm2708_fb_of_prop(struct device_node *node, char *name,
 static int bcm2708_fb_probe(struct platform_device *of_dev)
 {
 	struct device_node *node = of_dev->dev.of_node;
-	struct bcm2708_fb *fb = kzalloc(sizeof(*fb), GFP_KERNEL);
+	struct bcm2708_fb *fb = devm_kzalloc(&of_dev->dev,
+		sizeof(*fb), GFP_KERNEL);
+	char *name;
 	int ret;
 
 	if (!fb)
@@ -369,9 +393,12 @@ static int bcm2708_fb_probe(struct platform_device *of_dev)
 	if (IS_ERR(fb->mbox)) {
 		dev_err(fb->dev, "unable to find VideoCore mailbox (%ld)",
 			PTR_ERR(fb->mbox));
-		kfree(fb);
 		return PTR_ERR(fb->mbox);
 	}
+
+	name = bcm_mbox_name(fb->mbox);
+	dev_info(fb->dev, "attached to mailbox %s\n", name);
+	kfree(name);
 
 	bcm2708_fb_of_prop(node, "broadcom,width", &fbwidth);
 	bcm2708_fb_of_prop(node, "broadcom,height", &fbheight);
@@ -380,7 +407,6 @@ static int bcm2708_fb_probe(struct platform_device *of_dev)
 	ret = bcm2708_fb_register(fb);
 	if (ret) {
 		bcm_mbox_put(fb->mbox);
-		kfree(fb);
 		return ret;
 	}
 
@@ -393,12 +419,13 @@ static int bcm2708_fb_remove(struct platform_device *of_dev)
 	struct bcm2708_fb *fb = platform_get_drvdata(of_dev);
 
 	unregister_framebuffer(&fb->fb);
-	if (fb->fb.screen_base)
+	if (fb->fb.screen_base) {
+		release_mem_region(fb->fb.fix.smem_start,
+				fb->fb.fix.smem_len);
 		iounmap(fb->fb.screen_base);
-	dma_free_coherent(fb->dev, PAGE_ALIGN(sizeof(*fb->info)), fb->info, fb->dma);
+	}
 
 	bcm_mbox_put(fb->mbox);
-	kfree(fb);
 	platform_set_drvdata(of_dev, NULL);
 	return 0;
 }

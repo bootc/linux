@@ -17,6 +17,7 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/io.h>
+#include <linux/dmaengine.h>
 
 #include <linux/mmc/sdhci.h>
 
@@ -263,6 +264,7 @@ struct sdhci_ops {
 	void	(*set_clock)(struct sdhci_host *host, unsigned int clock);
 
 	int		(*enable_dma)(struct sdhci_host *host);
+	struct dma_chan	*(*enable_slave_dma)(struct sdhci_host *host);
 	unsigned int	(*get_max_clock)(struct sdhci_host *host);
 	unsigned int	(*get_min_clock)(struct sdhci_host *host);
 	unsigned int	(*get_timeout_clock)(struct sdhci_host *host);
@@ -283,7 +285,7 @@ struct sdhci_ops {
 
 static inline void sdhci_writel(struct sdhci_host *host, u32 val, int reg)
 {
-	if (unlikely(host->ops->write_l))
+	if (host->ops->write_l)
 		host->ops->write_l(host, val, reg);
 	else
 		writel(val, host->ioaddr + reg);
@@ -291,7 +293,7 @@ static inline void sdhci_writel(struct sdhci_host *host, u32 val, int reg)
 
 static inline void sdhci_writew(struct sdhci_host *host, u16 val, int reg)
 {
-	if (unlikely(host->ops->write_w))
+	if (host->ops->write_w)
 		host->ops->write_w(host, val, reg);
 	else
 		writew(val, host->ioaddr + reg);
@@ -299,7 +301,7 @@ static inline void sdhci_writew(struct sdhci_host *host, u16 val, int reg)
 
 static inline void sdhci_writeb(struct sdhci_host *host, u8 val, int reg)
 {
-	if (unlikely(host->ops->write_b))
+	if (host->ops->write_b)
 		host->ops->write_b(host, val, reg);
 	else
 		writeb(val, host->ioaddr + reg);
@@ -307,7 +309,7 @@ static inline void sdhci_writeb(struct sdhci_host *host, u8 val, int reg)
 
 static inline u32 sdhci_readl(struct sdhci_host *host, int reg)
 {
-	if (unlikely(host->ops->read_l))
+	if (host->ops->read_l)
 		return host->ops->read_l(host, reg);
 	else
 		return readl(host->ioaddr + reg);
@@ -315,7 +317,7 @@ static inline u32 sdhci_readl(struct sdhci_host *host, int reg)
 
 static inline u16 sdhci_readw(struct sdhci_host *host, int reg)
 {
-	if (unlikely(host->ops->read_w))
+	if (host->ops->read_w)
 		return host->ops->read_w(host, reg);
 	else
 		return readw(host->ioaddr + reg);
@@ -323,7 +325,7 @@ static inline u16 sdhci_readw(struct sdhci_host *host, int reg)
 
 static inline u8 sdhci_readb(struct sdhci_host *host, int reg)
 {
-	if (unlikely(host->ops->read_b))
+	if (host->ops->read_b)
 		return host->ops->read_b(host, reg);
 	else
 		return readb(host->ioaddr + reg);

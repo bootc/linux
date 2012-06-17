@@ -120,9 +120,7 @@ static void armctrl_unmask_irq(struct irq_data *d)
 
 static struct irq_chip armctrl_chip = {
 	.name = "ARMCTRL-level",
-	.irq_ack = armctrl_mask_irq,
 	.irq_mask = armctrl_mask_irq,
-	.irq_mask_ack = armctrl_mask_irq,
 	.irq_unmask = armctrl_unmask_irq
 };
 
@@ -166,7 +164,8 @@ int __init armctrl_of_init(struct device_node *node,
 		panic("%s: unable to map IC registers\n",
 			node->full_name);
 
-	if (!request_region(res.start, resource_size(&res), node->full_name))
+	if (!request_mem_region(res.start, resource_size(&res),
+			node->full_name))
 		panic("%s: unable to request resources for IC registers\n",
 			node->full_name);
 

@@ -147,43 +147,32 @@ static struct watchdog_ops bcm2708_ops = {
 
 static int __devinit bcm2708_wdog_probe(struct platform_device *of_dev)
 {
-	struct watchdog_device *dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	struct bcm2708_wdog *wdog = kzalloc(sizeof(*wdog), GFP_KERNEL);
+	struct watchdog_device *dev = devm_kzalloc(&of_dev->dev,
+		sizeof(*dev), GFP_KERNEL);
+	struct bcm2708_wdog *wdog = devm_kzalloc(&of_dev->dev,
+		sizeof(*wdog), GFP_KERNEL);
 	struct device_node *node = of_dev->dev.of_node;
 	int ret;
 
-	if (dev == NULL || wdog == NULL) {
-		kfree(wdog);
-		kfree(dev);
+	if (dev == NULL || wdog == NULL)
 		return -ENOMEM;
-	}
 
 	ret = of_address_to_resource(node, 0, &wdog->res);
 	if (ret)
-		goto err;
+		return ret;
 
 	wdog->dev = &of_dev->dev;
 	if (resource_size(&wdog->res) < PM_MINSZ) {
 		dev_err(wdog->dev, "resource too small (%#x)\n",
 			resource_size(&wdog->res));
-		ret = -EINVAL;
-		goto err;
+		return -EINVAL;
 	}
 
-	if (!request_region(wdog->res.start, resource_size(&wdog->res),
-			node->full_name)) {
-		dev_err(wdog->dev, "resource %#lx unavailable\n",
-			(unsigned long)wdog->res.start);
-		ret = -EBUSY;
-		goto err;
-	}
-
-	wdog->pm = ioremap(wdog->res.start, resource_size(&wdog->res));
+	wdog->pm = devm_request_and_ioremap(wdog->dev, &wdog->res);
 	if (!wdog->pm) {
 		dev_err(wdog->dev, "error mapping io at %#lx\n",
 			(unsigned long)wdog->res.start);
-		ret = -EIO;
-		goto err_release;
+		return -EIO;
 	}
 
 	spin_lock_init(&wdog->lock);
@@ -210,34 +199,20 @@ static int __devinit bcm2708_wdog_probe(struct platform_device *of_dev)
 	if (ret) {
 		dev_err(wdog->dev,
 			"cannot register watchdog (err=%d)\n", ret);
-		goto err_unmap;
+		return ret;
 	}
 
 	dev_info(wdog->dev, "at MMIO %#lx\n",
 		(unsigned long)wdog->res.start);
 	platform_set_drvdata(of_dev, dev);
 	return 0;
-
-err_unmap:
-	iounmap(wdog->pm);
-err_release:
-	release_region(wdog->res.start, resource_size(&wdog->res));
-err:
-	kfree(wdog);
-	kfree(dev);
-	return ret;
 }
 
 static int __devexit bcm2708_wdog_remove(struct platform_device *of_dev)
 {
 	struct watchdog_device *dev = platform_get_drvdata(of_dev);
-	struct bcm2708_wdog *wdog = watchdog_get_drvdata(dev);
 
 	watchdog_unregister_device(dev);
-	iounmap(wdog->pm);
-	release_region(wdog->res.start, resource_size(&wdog->res));
-	kfree(wdog);
-	kfree(dev);
 	platform_set_drvdata(of_dev, NULL);
 	return 0;
 }

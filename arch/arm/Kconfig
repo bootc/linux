@@ -7,7 +7,6 @@ config ARM
 	select HAVE_IDE if PCI || ISA || PCMCIA
 	select HAVE_DMA_ATTRS
 	select HAVE_DMA_CONTIGUOUS if (CPU_V6 || CPU_V6K || CPU_V7)
-	select CMA if (CPU_V6 || CPU_V6K || CPU_V7)
 	select HAVE_MEMBLOCK
 	select RTC_LIB
 	select SYS_SUPPORTS_APM_EMULATION
@@ -958,10 +957,9 @@ config PLAT_SPEAR
 
 config ARCH_BCM2708
 	bool "Broadcom BCM2708 family"
-	select CPU_V6
+	select CPU_V6K
 	select ARM_AMBA
 	select NEED_MACH_MEMORY_H
-	select NEED_MACH_IO_H
 	select COMMON_CLK
 	select CLKDEV_LOOKUP
 	select CLKSRC_MMIO_OF
@@ -975,8 +973,10 @@ config ARCH_BCM2708
 	select BCM2708_WDOG
 	select PINCTRL
 	select PINCTRL_BCM2708
+	select REGULATOR
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
+	select HAS_DMA
 	select MACH_BCM2708
 	help
 	  This enables support for Broadcom BCM2708 boards.

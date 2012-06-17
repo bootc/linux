@@ -273,16 +273,10 @@ static int __devinit bcm2708_i2c_probe(struct platform_device *pdev)
 	spin_lock_init(&bi->lock);
 	init_completion(&bi->done);
 
-	if (!devm_request_region(&pdev->dev, iomem.start, resource_size(&iomem),
-				pdev->dev.of_node->full_name)) {
-		dev_err(&pdev->dev, "could not request memory region\n");
-		return -ENOMEM;
-	}
-
-	bi->base = devm_ioremap(&pdev->dev, iomem.start, resource_size(&iomem));
+	bi->base = devm_request_and_ioremap(&pdev->dev, &iomem);
 	if (!bi->base) {
 		dev_err(&pdev->dev, "could not remap memory\n");
-		return -ENOMEM;
+		return -EADDRNOTAVAIL;
 	}
 
 	bi->clk = clk;

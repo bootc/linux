@@ -383,16 +383,10 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
 
 	bs = spi_master_get_devdata(master);
 
-	if (!devm_request_region(&pdev->dev, iomem.start, resource_size(&iomem),
-				pdev->dev.of_node->full_name)) {
-		dev_err(&pdev->dev, "could not request memory region\n");
-		err = -ENOMEM;
-		goto out_master_put;
-	}
-
-	bs->base = devm_ioremap(&pdev->dev, iomem.start, resource_size(&iomem));
+	bs->base = devm_request_and_ioremap(&pdev->dev, &iomem);
 	if (!bs->base) {
 		dev_err(&pdev->dev, "could not remap memory\n");
+		err = -EADDRNOTAVAIL;
 		goto out_master_put;
 	}
 

@@ -97,6 +97,13 @@ config GPIO_GENERIC_PLATFORM
 	help
 	  Say yes here to support basic platform_device memory-mapped GPIO controllers.
 
+config GPIO_BCM_VC_BELL
+	tristate "Broadcom VideoCore Doorbell Support"
+	depends on OF
+	default y if MACH_BCM2708
+	help
+	  Support for VideoCore Doorbell access on Broadcom devices.
+
 config GPIO_IT8761E
 	tristate "IT8761E GPIO support"
 	depends on X86  # unconditional access to IO space.
