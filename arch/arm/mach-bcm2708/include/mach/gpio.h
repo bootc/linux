@@ -40,6 +40,8 @@ static inline unsigned irq_to_gpio(unsigned irq) {
 static inline unsigned gpio_to_irq(unsigned gpio) {
 	return GPIO_IRQ_START+gpio;
 }
+#define gpio_to_irq gpio_to_irq
+
 #endif /* CONFIG_GPIOLIB */
 
 #endif
