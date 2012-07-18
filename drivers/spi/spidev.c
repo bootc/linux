@@ -4,7 +4,9 @@
  * Copyright (C) 2006 SWAPP
  *	Andrea Paterniani <a.paterniani@swapp-eng.it>
  * Copyright (C) 2007 David Brownell (simplification, cleanup)
- *
+ * 
+ * Dynamic binding by Dominique Gallot <dga@dgconsulting.be>
+ * 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -20,6 +22,7 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/ioctl.h>
@@ -34,6 +37,7 @@
 
 #include <linux/spi/spi.h>
 #include <linux/spi/spidev.h>
+#include <linux/string.h>
 
 #include <asm/uaccess.h>
 
@@ -88,9 +92,33 @@ struct spidev_data {
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
 
+struct added_device_struct {
+        struct list_head list;
+	struct spi_device *added_device;
+};
+
+static LIST_HEAD(added_device_list);
+
 static unsigned bufsiz = 4096;
+static char* binding = NULL;
 module_param(bufsiz, uint, S_IRUGO);
+module_param(binding, charp, S_IRUGO);
+/*
+  This version of spidev support dynamic binding of spidev.
+  Allowing to bind this spi bus to this driver dynamicly and set the bus parameter
+  the format of the binding parameter is 
+  spidev0.1=8,1,200000
+  where 0.1 will link the device with the CS=0 on the spibus 0
+        8 is the bus length
+        1 is the spi mode ( see the value of SPI_MODE_x in this case )
+        2000000 the bus speed
+*/
 MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
+MODULE_PARM_DESC(binding, "binding informations. ex: spidev0.0=8,1,2000000;spidev0.1=8,3,60000000");
+
+#define MODULE_BINDING_FORMAT "spidev%d.%d=%d,%d,%d"
+
+
 
 /*-------------------------------------------------------------------------*/
 
@@ -571,6 +599,125 @@ static struct class *spidev_class;
 
 /*-------------------------------------------------------------------------*/
 
+
+static int __init add_device_to_bus(u16 spi_bus, u8 spi_bus_cs, u8 spi_bus_mode, u8 spi_bus_bits, u32 spi_bus_speed)
+{
+        struct spi_master *spi_master;
+        struct spi_device *spi_device;
+        struct device *pdev;
+        char buff[64];
+        int status = 0;
+        printk( "add_device_to_bus\n");
+        spi_master = spi_busnum_to_master(spi_bus);
+        if (!spi_master) {
+                printk(KERN_ALERT "spi_busnum_to_master(%d) returned NULL\n",
+        spi_bus);
+                printk(KERN_ALERT "Missing spi master bus\n");
+                return -1;
+        }
+
+        spi_device = spi_alloc_device(spi_master);
+        if (!spi_device) {
+                put_device(&spi_master->dev);
+                printk(KERN_ALERT "spi_alloc_device() failed\n");
+                return -1;
+        }
+
+        // specify a chip select line
+        spi_device->chip_select = spi_bus_cs;
+
+        // Check whether this SPI bus.cs is already claimed
+        snprintf(buff, sizeof(buff), "%s.%u",
+        dev_name(&spi_device->master->dev),
+        spi_device->chip_select);
+        printk( "bus_find_device_by_name \n");
+
+        pdev = bus_find_device_by_name(spi_device->dev.bus, NULL, buff);
+        if (pdev) {
+                // We are not going to use this spi_device, so free it
+                spi_dev_put(spi_device);
+                if (pdev->driver && pdev->driver->name ) {
+                        printk( "bus_find_device_by_name - device already attached %s \n", pdev->driver->name );
+                        printk( "bus_find_device_by_name - device already attached NULL \n" );
+                }
+                //
+                //There is already a device configured for this bus.cs combination.
+                // It's okay if it's us. This happens if we previously loaded then
+                // unloaded our driver.
+                // If it is not us, we complain and fail.
+                //
+                if (pdev->driver && pdev->driver->name &&
+                        strcmp("spidev", pdev->driver->name)) {
+                        printk(KERN_ALERT
+                        "Driver [%s] already registered for %s\n",
+                        pdev->driver->name, buff);
+                        status = -1;
+                }
+
+        } else {
+		struct added_device_struct *added;
+                printk( "bus_find_device_by_name - will do spi_add_device\n");
+                spi_device->max_speed_hz = spi_bus_speed;
+
+                spi_device->mode = spi_bus_mode;
+                spi_device->bits_per_word = spi_bus_bits;
+                spi_device->irq = -1;
+                spi_device->controller_state = NULL;
+                spi_device->controller_data = NULL;
+                strlcpy(spi_device->modalias, "spidev", SPI_NAME_SIZE);
+                status = spi_add_device(spi_device);
+
+                if (status < 0) {
+                        spi_dev_put(spi_device);
+                        printk(KERN_ALERT "spi_add_device() failed: %d\n",
+                        status);
+                }
+ 		added = (struct added_device_struct *)kmalloc( sizeof(struct added_device_struct), GFP_KERNEL );
+		added->added_device = spi_device;
+		list_add( &added->list, &added_device_list );
+
+		printk( "spi_add_device %s\n", spi_device->modalias );
+        }
+
+        put_device(&spi_master->dev);
+
+        return status;
+}
+
+static int __init add_devices_to_bus(void)
+{
+	int spi_bus;
+	int spi_bus_cs;
+	int spi_bus_mode;
+	int spi_bus_bits;
+	int spi_bus_speed;
+
+	int rs = 0, srs = 0;
+	char *tmp_binding = kstrdup(binding, GFP_KERNEL);
+	char *entry;
+        
+	if (!tmp_binding) {
+		return -ENOMEM;
+	}
+
+	while ( ( entry = strsep(&tmp_binding, ";") ) ) {
+		printk("binding = %s\n", entry);
+		srs =  sscanf( entry, MODULE_BINDING_FORMAT, &spi_bus, &spi_bus_cs, &spi_bus_bits, &spi_bus_mode, &spi_bus_speed );
+		if ( srs == 5 ) {
+			printk( "rs:%d . bus=%d, cs=%d, bits=%d, mode=%d, speed=%d \n", rs, spi_bus, spi_bus_cs, spi_bus_bits, spi_bus_mode, spi_bus_speed );
+			rs = add_device_to_bus( spi_bus, spi_bus_cs, spi_bus_mode, spi_bus_bits, spi_bus_speed );
+			if ( rs != 0 ) {
+				break;
+			}
+		} else {
+			printk( "Invalid binding format %s\n", entry );
+		}
+	}
+	kfree( tmp_binding );
+	return rs;
+}
+
+
 static int __devinit spidev_probe(struct spi_device *spi)
 {
 	struct spidev_data	*spidev;
@@ -683,12 +830,44 @@ static int __init spidev_init(void)
 		class_destroy(spidev_class);
 		unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
 	}
+
+        status = add_devices_to_bus();
+        if (status < 0) {
+        	struct list_head *pos, *q;
+                printk(KERN_ALERT "add_device_to_bus() failed\n");
+        	list_for_each_safe( pos, q, &added_device_list ) {
+               		struct added_device_struct *tmp;
+                	tmp = list_entry( pos, struct added_device_struct, list );
+                	printk("spi_unregister_device\n");
+                	spi_unregister_device(tmp->added_device);
+                	printk("spi_dev_put\n");
+                	spi_dev_put(tmp->added_device);
+                	list_del( pos );
+                	kfree( tmp );
+		}
+		class_destroy(spidev_class);
+		unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
+                spi_unregister_driver(&spidev_spi_driver);
+                return status;
+        }
+
 	return status;
 }
 module_init(spidev_init);
 
 static void __exit spidev_exit(void)
 {
+	struct list_head *pos, *q;
+	list_for_each_safe( pos, q, &added_device_list ) {
+    		struct added_device_struct *tmp;
+    		tmp = list_entry( pos, struct added_device_struct, list );
+		printk("spi_unregister_device\n");
+		spi_unregister_device(tmp->added_device);
+		printk("spi_dev_put\n");
+		spi_dev_put(tmp->added_device);
+    		list_del( pos );
+    		kfree( tmp );
+  	}
 	spi_unregister_driver(&spidev_spi_driver);
 	class_destroy(spidev_class);
 	unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
