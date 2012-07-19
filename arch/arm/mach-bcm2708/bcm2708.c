@@ -629,8 +629,8 @@ void __init bcm2708_init(void)
 	system_serial_low = serial;
 
 #ifdef CONFIG_SPI
-	spi_register_board_info(bcm2708_spi_devices,
-			ARRAY_SIZE(bcm2708_spi_devices));
+#	spi_register_board_info(bcm2708_spi_devices,
+#			ARRAY_SIZE(bcm2708_spi_devices));
 #endif
 }
 
