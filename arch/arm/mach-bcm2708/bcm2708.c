@@ -500,6 +500,9 @@ static struct platform_device bcm2708_spi_device = {
 	.resource = bcm2708_spi_resources,
 };
 
+/*
+ * Do not link the spi device by default to spidev, since now spidev support manual binding.
+
 static struct spi_board_info bcm2708_spi_devices[] = {
 	{
 		.modalias = "spidev",
@@ -515,6 +518,7 @@ static struct spi_board_info bcm2708_spi_devices[] = {
 		.mode = SPI_MODE_0,
 	}
 };
+*/
 
 static struct resource bcm2708_bsc0_resources[] = {
 	{
@@ -625,8 +629,8 @@ void __init bcm2708_init(void)
 	system_serial_low = serial;
 
 #ifdef CONFIG_SPI
-	spi_register_board_info(bcm2708_spi_devices,
-			ARRAY_SIZE(bcm2708_spi_devices));
+//	spi_register_board_info(bcm2708_spi_devices,
+//			ARRAY_SIZE(bcm2708_spi_devices));
 #endif
 }
 
